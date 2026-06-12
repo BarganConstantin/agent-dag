@@ -71,6 +71,10 @@ export interface HookPayload {
   tool_input?: any;
   tool_response?: any;
   tool_use_id?: string;
+  /** Real CC SubagentStart/Stop payloads. */
+  agent_id?: string;
+  agent_type?: string;
+  /** Synthetic / older alias used by some test fixtures. */
   parent_tool_use_id?: string;
   subagent_type?: string;
   message?: string;

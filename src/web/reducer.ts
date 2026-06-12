@@ -45,6 +45,10 @@ export interface GraphState {
   toolIndex: Map<string, ToolCall>;
   /** tool_use_id → owning agent.id, so PostToolUse can settle the right agent's tool. */
   toolOwner: Map<string, string>;
+  /** Per-session LIFO stack of active subagent ids — used to attribute incoming
+   *  PreToolUse to the deepest live subagent, since CC tool-call hooks don't
+   *  carry agent_id themselves. */
+  activeSubagentStack: Map<string, string[]>;
   lastSeq: number;
   totalEvents: number;
 }
@@ -54,6 +58,7 @@ export function initialState(): GraphState {
     agents: new Map(),
     toolIndex: new Map(),
     toolOwner: new Map(),
+    activeSubagentStack: new Map(),
     lastSeq: 0,
     totalEvents: 0,
   };
@@ -65,14 +70,27 @@ function basename(p?: string): string | undefined {
   return parts[parts.length - 1];
 }
 
-function agentIdFor(p: HookPayload): string {
-  const session = p.session_id ?? "unknown";
-  const parent = p.parent_tool_use_id;
-  return parent ? `${session}::${parent}` : session;
-}
-
 function rootAgentId(sessionId: string): string {
   return sessionId;
+}
+
+function subagentIdFor(sessionId: string, agentId: string): string {
+  return `${sessionId}::${agentId}`;
+}
+
+/** True if this event explicitly identifies a subagent (vs the root session). */
+function isExplicitSubagent(p: HookPayload): boolean {
+  return Boolean(p.agent_id || p.parent_tool_use_id);
+}
+
+function subagentLabel(p: HookPayload): string {
+  return p.agent_type ?? p.subagent_type ?? "subagent";
+}
+
+function explicitSubagentKey(p: HookPayload): string | null {
+  if (p.agent_id) return p.agent_id;
+  if (p.parent_tool_use_id) return p.parent_tool_use_id;
+  return null;
 }
 
 function ensureRoot(state: GraphState, sessionId: string, now: number, synthetic: boolean): AgentNodeData {
@@ -98,35 +116,55 @@ function ensureRoot(state: GraphState, sessionId: string, now: number, synthetic
   return a;
 }
 
-function ensureAgent(state: GraphState, p: HookPayload, now: number): AgentNodeData {
+/** Resolve which agent owns this event:
+ *  - If the payload explicitly names a subagent (agent_id / parent_tool_use_id),
+ *    that subagent is the owner.
+ *  - Otherwise, for PreToolUse-style events that don't identify a subagent, we
+ *    attribute to the deepest currently-active subagent of this session if any,
+ *    else to the root session.
+ */
+function resolveOwner(state: GraphState, p: HookPayload, now: number): AgentNodeData {
   const sessionId = p.session_id ?? "unknown";
-  const id = agentIdFor(p);
-  const isSub = !!p.parent_tool_use_id;
+  const explicit = explicitSubagentKey(p);
 
-  // Always make sure the root for this session exists.
-  const root = ensureRoot(state, sessionId, now, /*synthetic*/ isSub);
-  if (root.synthetic && !isSub) {
-    // First non-subagent event for this session — mark it real.
-    root.synthetic = false;
-    root.startedAt = now;
-  }
-  if (!isSub) {
-    if (!root.cwd && p.cwd) { root.cwd = p.cwd; root.cwdBasename = basename(p.cwd); }
-    if (root.label === "session" && p.cwd) root.label = basename(p.cwd) ?? "session";
-    return root;
+  if (explicit) {
+    return ensureSubagent(state, sessionId, explicit, p, now);
   }
 
-  // Subagent path.
+  // No explicit subagent. Attribute to top of active stack if one is live.
+  const stack = state.activeSubagentStack.get(sessionId);
+  const topKey = stack && stack.length > 0 ? stack[stack.length - 1] : null;
+  if (topKey) {
+    const sub = state.agents.get(subagentIdFor(sessionId, topKey));
+    if (sub) {
+      if (!sub.cwd && p.cwd) { sub.cwd = p.cwd; sub.cwdBasename = basename(p.cwd); }
+      return sub;
+    }
+  }
+  // Fall back to root.
+  const root = ensureRoot(state, sessionId, now, /*synthetic*/ false);
+  if (root.synthetic) { root.synthetic = false; root.startedAt = now; }
+  if (!root.cwd && p.cwd) { root.cwd = p.cwd; root.cwdBasename = basename(p.cwd); }
+  if (root.label === "session" && p.cwd) root.label = basename(p.cwd) ?? "session";
+  return root;
+}
+
+function ensureSubagent(state: GraphState, sessionId: string, key: string, p: HookPayload, now: number): AgentNodeData {
+  const id = subagentIdFor(sessionId, key);
+  // Make sure root exists; it may still be synthetic if we never saw a root event.
+  const root = ensureRoot(state, sessionId, now, /*synthetic*/ true);
+
   let a = state.agents.get(id);
   if (a) {
     if (!a.cwd && p.cwd) { a.cwd = p.cwd; a.cwdBasename = basename(p.cwd); }
-    if (p.subagent_type && (a.label === "subagent" || !a.label)) a.label = p.subagent_type;
+    const lbl = subagentLabel(p);
+    if (lbl && (a.label === "subagent" || !a.label)) a.label = lbl;
     return a;
   }
   a = {
     id,
     sessionId,
-    label: p.subagent_type ?? "subagent",
+    label: subagentLabel(p),
     kind: "subagent",
     parentId: root.id,
     state: "active",
@@ -143,6 +181,23 @@ function ensureAgent(state: GraphState, p: HookPayload, now: number): AgentNodeD
   state.agents.set(id, a);
   root.childCount += 1;
   return a;
+}
+
+function pushActive(state: GraphState, sessionId: string, key: string): void {
+  const arr = state.activeSubagentStack.get(sessionId) ?? [];
+  arr.push(key);
+  state.activeSubagentStack.set(sessionId, arr);
+}
+
+function popActive(state: GraphState, sessionId: string, key: string): void {
+  const arr = state.activeSubagentStack.get(sessionId);
+  if (!arr) return;
+  // Remove the last occurrence of this key (subagent may not be stack top if
+  // multiple are running in parallel and one finishes out of order).
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (arr[i] === key) { arr.splice(i, 1); break; }
+  }
+  if (arr.length === 0) state.activeSubagentStack.delete(sessionId);
 }
 
 function shortPreview(input: any, max = 80): string {
@@ -180,39 +235,45 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
   state.totalEvents += 1;
   state.lastSeq = env.seq;
 
-  const a = ensureAgent(state, p, now);
+  const sessionId = p.session_id ?? "unknown";
+  const owner = resolveOwner(state, p, now);
 
   switch (name) {
     case "SessionStart": {
-      a.state = "active";
-      a.startedAt = a.startedAt || now;
+      const root = ensureRoot(state, sessionId, now, false);
+      root.synthetic = false;
+      root.state = "active";
+      root.startedAt = root.startedAt || now;
+      if (!root.cwd && p.cwd) { root.cwd = p.cwd; root.cwdBasename = basename(p.cwd); }
+      if (root.label === "session" && p.cwd) root.label = basename(p.cwd) ?? "session";
       break;
     }
     case "UserPromptSubmit": {
-      a.state = "active";
+      const target = resolveOwner(state, p, now);
+      target.state = "active";
       const text = (typeof p.prompt === "string" ? p.prompt : typeof p.message === "string" ? p.message : "") ?? "";
       if (text) {
-        a.prompts.push({ at: now, text });
-        if (!a.firstPrompt) a.firstPrompt = shortPreview(text, 120);
+        target.prompts.push({ at: now, text });
+        if (!target.firstPrompt) target.firstPrompt = shortPreview(text, 120);
       }
       break;
     }
     case "PreToolUse": {
-      const id = p.tool_use_id ?? `${a.id}:${a.toolCount}`;
+      const id = p.tool_use_id ?? `${owner.id}:${owner.toolCount}`;
       const tc: ToolCall = {
         id,
         name: p.tool_name ?? "?",
         input: p.tool_input,
         inputPreview: shortPreview(p.tool_input),
-        agentId: a.id,
+        agentId: owner.id,
         startedAt: now,
       };
-      a.tools.push(tc);
-      a.toolCount += 1;
-      a.state = "active";
+      owner.tools.push(tc);
+      owner.toolCount += 1;
+      owner.state = "active";
       state.toolIndex.set(id, tc);
-      state.toolOwner.set(id, a.id);
-      refreshInFlight(a);
+      state.toolOwner.set(id, owner.id);
+      refreshInFlight(owner);
       break;
     }
     case "PostToolUse":
@@ -230,32 +291,43 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
         const ownerId = state.toolOwner.get(id!);
         state.toolOwner.delete(id!);
         if (ownerId) {
-          const owner = state.agents.get(ownerId);
-          if (owner) {
-            if (usage) addUsage(owner.usage, usage);
-            refreshInFlight(owner);
+          const oa = state.agents.get(ownerId);
+          if (oa) {
+            if (usage) addUsage(oa.usage, usage);
+            refreshInFlight(oa);
           }
         }
       }
       break;
     }
     case "SubagentStart": {
-      a.state = "active";
-      a.startedAt = a.startedAt || now;
-      if (p.subagent_type) a.label = p.subagent_type;
+      const key = explicitSubagentKey(p);
+      if (!key) break;
+      const sub = ensureSubagent(state, sessionId, key, p, now);
+      sub.state = "active";
+      sub.startedAt = sub.startedAt || now;
+      const lbl = subagentLabel(p);
+      if (lbl) sub.label = lbl;
+      pushActive(state, sessionId, key);
       break;
     }
     case "SubagentStop": {
-      a.state = "done";
-      a.endedAt = now;
-      refreshInFlight(a);
+      const key = explicitSubagentKey(p);
+      if (!key) break;
+      const sub = ensureSubagent(state, sessionId, key, p, now);
+      sub.state = "done";
+      sub.endedAt = now;
+      refreshInFlight(sub);
+      popActive(state, sessionId, key);
       break;
     }
     case "Stop":
     case "SessionEnd": {
-      a.state = "done";
-      a.endedAt = now;
-      refreshInFlight(a);
+      // Mark the root done; don't touch subagents (they have their own Stop).
+      const root = ensureRoot(state, sessionId, now, false);
+      root.state = "done";
+      root.endedAt = now;
+      refreshInFlight(root);
       break;
     }
     case "Notification": {
