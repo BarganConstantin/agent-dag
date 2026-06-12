@@ -26,28 +26,28 @@
 }
 
 :root[data-theme="light"] {
-  --bg: #f7f8fb;
+  --bg: #eef1f6;
   --bg-soft: #ffffff;
   --panel: #ffffff;
-  --line: #dfe2e8;
-  --line-soft: #ebedf1;
-  --text: #1c1f26;
-  --muted: #6a6f7a;
-  --muted-dim: #aab0ba;
-  --accent: #0284c7;
-  --accent-dim: #38bdf855;
-  --ok: #16a34a;
+  --line: #c8cdd6;
+  --line-soft: #dde1e8;
+  --text: #0d1117;
+  --muted: #4a5260;
+  --muted-dim: #7c8493;
+  --accent: #0369a1;
+  --accent-dim: rgba(3,105,161,0.22);
+  --ok: #15803d;
   --warn: #b45309;
-  --err: #dc2626;
-  --inflight: #a21caf;
-  --shadow-1: 0 4px 14px rgba(15,23,42,0.06);
-  --shadow-2: 0 10px 24px rgba(15,23,42,0.10);
-  --node-grad: linear-gradient(180deg, #ffffff, #f5f7fb);
-  --topbar-grad: linear-gradient(to bottom, #ffffff, #f3f5f9);
-  --bg-grid-1: rgba(2,132,199,0.05);
-  --bg-grid-2: rgba(162,28,175,0.04);
-  --grid-line: #e6e8ed;
-  --minimap-mask: rgba(247,248,251,0.85);
+  --err: #b91c1c;
+  --inflight: #7e22ce;
+  --shadow-1: 0 4px 14px rgba(15,23,42,0.10);
+  --shadow-2: 0 10px 28px rgba(15,23,42,0.16);
+  --node-grad: linear-gradient(180deg, #ffffff, #f2f5fa);
+  --topbar-grad: linear-gradient(to bottom, #ffffff, #eef1f6);
+  --bg-grid-1: rgba(3,105,161,0.10);
+  --bg-grid-2: rgba(126,34,206,0.08);
+  --grid-line: #d0d5dd;
+  --minimap-mask: rgba(238,241,246,0.85);
   color-scheme: light;
 }
 
@@ -63,12 +63,33 @@ html, body, #root {
   overscroll-behavior: none;
 }
 
+/* Custom scrollbars — quieter, theme-aware */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border: 2px solid var(--bg);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--muted-dim); }
+* { scrollbar-color: var(--line) transparent; scrollbar-width: thin; }
+
+/* Visible focus ring for keyboard nav */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+button:focus-visible, .search input:focus-visible { outline-offset: 1px; }
+
 .app {
   display: grid;
-  grid-template-columns: 1fr 340px;
-  grid-template-rows: 52px 1fr;
+  grid-template-columns: 1fr 360px;
+  grid-template-rows: 52px auto 1fr;
   height: 100vh;
 }
+.canvas-wrap { grid-column: 1; grid-row: 3; }
+.detail { grid-column: 2; grid-row: 2 / -1; }
 
 /* ---------------- topbar ---------------- */
 
@@ -112,7 +133,24 @@ html, body, #root {
   margin-right: 6px;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
+}
+.topbar .status .stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.topbar .status .stat .lbl { color: var(--muted); }
+.topbar .status .stat + .stat::before {
+  content: "";
+  display: inline-block;
+  width: 1px;
+  height: 12px;
+  background: var(--line);
+  margin-right: 10px;
+  position: relative;
+  top: 1px;
 }
 .topbar .status .pill {
   display: inline-flex;
@@ -132,11 +170,16 @@ html, body, #root {
   box-shadow: 0 0 6px var(--ok);
   animation: pulse 1.6s ease-in-out infinite;
 }
-.topbar .status .pill.dead { color: var(--err); border-color: rgba(252,165,165,0.25); }
+.topbar .status .pill.dead {
+  color: var(--err);
+  border-color: rgba(252,165,165,0.35);
+  background: rgba(252,165,165,0.06);
+}
 .topbar .status .pill.dead::before {
   content: ""; display: inline-block;
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--err);
+  box-shadow: 0 0 6px var(--err);
 }
 .topbar .status .count {
   color: var(--text);
@@ -160,6 +203,11 @@ button.btn {
 button.btn:hover { border-color: var(--accent-dim); color: var(--accent); }
 button.btn:active { transform: translateY(1px); }
 button.btn.primary { background: var(--accent-dim); color: var(--text); border-color: var(--accent-dim); }
+button.btn.warn {
+  border-color: rgba(252, 211, 77, 0.5);
+  color: var(--warn);
+}
+button.btn.warn:hover { border-color: var(--warn); color: var(--warn); }
 button.btn.icon-btn {
   width: 30px;
   height: 30px;
@@ -215,6 +263,44 @@ button.btn.icon-btn {
   line-height: 1;
 }
 .search-clear:hover { color: var(--text); }
+.search-kbd {
+  position: absolute;
+  right: 6px;
+  pointer-events: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 5px;
+  line-height: 16px;
+  height: 16px;
+}
+.search input:focus ~ .search-kbd { opacity: 0; }
+
+/* ---------------- connection banner ---------------- */
+.conn-banner {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 18px;
+  background: linear-gradient(90deg, rgba(252,165,165,0.12), transparent);
+  border-bottom: 1px solid rgba(252,165,165,0.30);
+  color: var(--err);
+  font-size: 12.5px;
+  font-weight: 500;
+  animation: fadeIn 200ms ease;
+}
+.conn-banner .conn-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--err);
+  box-shadow: 0 0 8px var(--err);
+  animation: pulse 1.2s infinite;
+}
 
 /* dim nodes that don't match search */
 .react-flow__node.rf-dim { opacity: 0.22; filter: saturate(0.4); }
@@ -650,7 +736,10 @@ button.btn.icon-btn {
   position: absolute;
   border-radius: 18px;
   border: 1px dashed transparent;
-  transition: opacity 200ms ease;
+  transition: opacity 200ms ease, left 320ms cubic-bezier(0.22,1,0.36,1),
+              top 320ms cubic-bezier(0.22,1,0.36,1),
+              width 320ms cubic-bezier(0.22,1,0.36,1),
+              height 320ms cubic-bezier(0.22,1,0.36,1);
   overflow: visible;
 }
 .cluster-label {
@@ -716,8 +805,39 @@ button.tool.clickable {
   border-radius: 4px;
   transition: background 120ms;
 }
-button.tool.clickable:hover { background: var(--bg-soft); padding-left: 6px; padding-right: 6px; }
+button.tool.clickable { padding-left: 6px; padding-right: 6px; }
+button.tool.clickable:hover { background: var(--bg-soft); }
 button.tool.clickable:last-child { border-bottom: none; }
+
+/* ---------------- shortcuts grid ---------------- */
+.shortcuts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  align-items: center;
+}
+.shortcuts .sc { display: contents; }
+.shortcuts .sc kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 2px 7px;
+  text-align: center;
+  min-width: 38px;
+}
+.shortcuts .sc span { color: var(--muted); font-size: 12px; }
+
+/* hint row inside empty hero */
+.empty-hero .hint-row {
+  margin-top: 14px;
+  font-size: 12px;
+  opacity: 0.75;
+}
 
 /* ---------------- tool detail modal ---------------- */
 
@@ -927,3 +1047,81 @@ button.tool.clickable:last-child { border-bottom: none; }
   font-size: 12.5px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------------- light-mode contrast tuning ----------------
+   Hardcoded rgba() tints elsewhere in this file were picked for dark
+   surfaces; on white they vanish. Re-tint with deeper, more saturated
+   versions only when the light theme is active. */
+:root[data-theme="light"] .topbar .status .pill.live {
+  border-color: rgba(21,128,61,0.45);
+  background: rgba(21,128,61,0.10);
+}
+:root[data-theme="light"] .topbar .status .pill.dead {
+  border-color: rgba(185,28,28,0.50);
+  background: rgba(185,28,28,0.10);
+}
+:root[data-theme="light"] .agent-node.state-active {
+  border-color: rgba(126,34,206,0.65);
+  box-shadow: 0 0 0 1px rgba(126,34,206,0.30), 0 8px 22px rgba(126,34,206,0.18);
+}
+:root[data-theme="light"] .agent-node.state-done { border-color: rgba(21,128,61,0.55); }
+:root[data-theme="light"] .agent-node.state-err  { border-color: rgba(185,28,28,0.60); }
+
+:root[data-theme="light"] .state-pill.state-active {
+  border-color: rgba(126,34,206,0.45);
+  background: rgba(126,34,206,0.10);
+}
+:root[data-theme="light"] .state-pill.state-active::before { box-shadow: 0 0 5px rgba(126,34,206,0.55); }
+:root[data-theme="light"] .state-pill.state-done {
+  border-color: rgba(21,128,61,0.45);
+  background: rgba(21,128,61,0.10);
+}
+:root[data-theme="light"] .state-pill.state-err {
+  border-color: rgba(185,28,28,0.50);
+  background: rgba(185,28,28,0.10);
+}
+
+:root[data-theme="light"] .tool-chip { background: #f4f6fa; }
+:root[data-theme="light"] .tool-chip.inflight {
+  border-color: rgba(126,34,206,0.55);
+  background: rgba(126,34,206,0.08);
+}
+:root[data-theme="light"] .tool-chip.done { border-color: rgba(21,128,61,0.40); }
+:root[data-theme="light"] .tool-chip.err {
+  border-color: rgba(185,28,28,0.55);
+  background: rgba(185,28,28,0.08);
+}
+
+:root[data-theme="light"] .modal-section .err-tag {
+  background: rgba(185,28,28,0.10);
+  border-color: rgba(185,28,28,0.45);
+}
+
+:root[data-theme="light"] .now-running .now-dot { box-shadow: 0 0 6px rgba(126,34,206,0.6); }
+
+:root[data-theme="light"] .empty-hero .orbit { border-color: rgba(3,105,161,0.30); }
+:root[data-theme="light"] .empty-hero .orbit.r2 { border-color: rgba(126,34,206,0.30); }
+:root[data-theme="light"] .empty-hero .orbit.r3 { border-color: rgba(21,128,61,0.32); }
+:root[data-theme="light"] .empty-hero .core {
+  background: radial-gradient(circle at 30% 30%, #c084fc 0%, #0ea5e9 55%, #1e293b 100%);
+  box-shadow: 0 0 28px rgba(126,34,206,0.40), 0 0 64px rgba(3,105,161,0.25);
+}
+
+:root[data-theme="light"] .conn-banner {
+  background: linear-gradient(90deg, rgba(185,28,28,0.14), transparent);
+  border-bottom-color: rgba(185,28,28,0.45);
+}
+
+:root[data-theme="light"] button.btn.warn {
+  border-color: rgba(180,83,9,0.55);
+  color: var(--warn);
+}
+
+/* search clear button is muted-gray on white — bump it */
+:root[data-theme="light"] .search-clear { color: var(--muted); }
+
+/* react-flow edge dashflow uses --inflight which is now deep purple → fine */
+:root[data-theme="light"] .react-flow__edge-path { stroke: rgba(3,105,161,0.40); }
+
+/* mini-map node strokes more visible */
+:root[data-theme="light"] .react-flow__minimap-node { stroke: rgba(15,23,42,0.25); }

@@ -7,6 +7,8 @@ import ReactFlow, {
   type Node,
   ReactFlowProvider,
   useReactFlow,
+  useStore,
+  type ReactFlowState,
 } from "reactflow";
 import AgentNode from "./components/AgentNode";
 import ToolModal from "./components/ToolModal";
@@ -47,6 +49,7 @@ function snapshotToFlow(
   now: number,
   pinned: Map<string, { x: number; y: number }>,
   query: string,
+  measured: Map<string, { width: number; height: number }>,
 ): { nodes: Node<AgentNodeData & { now: number; dim?: boolean }>[]; edges: Edge[] } {
   const nodes: Node<AgentNodeData & { now: number; dim?: boolean }>[] = [];
   const edges: Edge[] = [];
@@ -94,7 +97,7 @@ function snapshotToFlow(
       });
     }
   }
-  return { nodes: autoLayout(nodes, edges, { direction: "LR", pinned }), edges };
+  return { nodes: autoLayout(nodes, edges, { direction: "LR", pinned, measured }), edges };
 }
 
 export default function App() {
@@ -120,17 +123,19 @@ function Inner() {
   const [query, setQuery] = useState("");
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     if (typeof window === "undefined") return "dark";
-    return (window.localStorage.getItem("ccgraph.theme") as "dark" | "light") ?? "dark";
+    return (window.localStorage.getItem("agent-dag.theme") as "dark" | "light") ?? "dark";
   });
+  const [everConnected, setEverConnected] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    try { window.localStorage.setItem("ccgraph.theme", theme); } catch {}
+    try { window.localStorage.setItem("agent-dag.theme", theme); } catch {}
   }, [theme]);
 
   // SSE subscription
   useEffect(() => {
     const es = new EventSource("/events");
-    es.addEventListener("open", () => setLive(true));
+    es.addEventListener("open", () => { setLive(true); setEverConnected(true); });
     es.addEventListener("error", () => setLive(false));
     es.addEventListener("hook", (e) => {
       try {
@@ -174,9 +179,35 @@ function Inner() {
     }
   });
 
+  // Real per-node sizes — read from RF's internal store via a selector that
+  // returns a monotonic counter. Counter only ticks when a measurement
+  // actually changed (delta > 4px) or a new node was measured. No
+  // recursion: stable input → stable output → no extra render.
+  const measuredRef = useRef<Map<string, { width: number; height: number }>>(new Map());
+  const measuredVersionRef = useRef(0);
+  const measuredSelector = useCallback((s: ReactFlowState) => {
+    const map = measuredRef.current;
+    let changed = false;
+    for (const n of s.nodeInternals.values()) {
+      const w = n.width, h = n.height;
+      if (w == null || h == null) continue;
+      const prev = map.get(n.id);
+      if (!prev) {
+        map.set(n.id, { width: w, height: h });
+        changed = true;
+      } else if (Math.abs(prev.height - h) > 4 || Math.abs(prev.width - w) > 4) {
+        map.set(n.id, { width: w, height: h });
+        changed = true;
+      }
+    }
+    if (changed) measuredVersionRef.current += 1;
+    return measuredVersionRef.current;
+  }, []);
+  const sizeVersion = useStore(measuredSelector);
+
   const { nodes, edges } = useMemo(
-    () => snapshotToFlow(stateRef.current, now, pinnedRef.current, query),
-    [stateRef.current, stateRef.current.lastSeq, now, query],
+    () => snapshotToFlow(stateRef.current, now, pinnedRef.current, query, measuredRef.current),
+    [stateRef.current, stateRef.current.lastSeq, now, query, sizeVersion],
   );
 
   const selected = selectedId ? stateRef.current.agents.get(selectedId) : null;
@@ -190,6 +221,7 @@ function Inner() {
     try { await fetch("/api/clear", { method: "POST" }); } catch {}
     stateRef.current = initialState();
     pinnedRef.current.clear();
+    measuredRef.current.clear();
     setSelectedId(null);
     rerender();
   }, [rerender]);
@@ -202,12 +234,18 @@ function Inner() {
   // keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.tagName === "INPUT") return;
+      const inInput = (e.target as HTMLElement)?.tagName === "INPUT";
+      if (e.key === "Escape") {
+        if (inInput) (e.target as HTMLInputElement).blur();
+        else setSelectedId(null);
+        return;
+      }
+      if (inInput) return;
+      if (e.key === "/") { e.preventDefault(); searchInputRef.current?.focus(); return; }
       if (e.key === " ") { e.preventDefault(); setPaused(p => !p); }
       if (e.key === "c" || e.key === "C") handleClear();
       if (e.key === "r" || e.key === "R") handleRelayout();
       if (e.key === "t" || e.key === "T") setTheme(t => (t === "dark" ? "light" : "dark"));
-      if (e.key === "Escape") setSelectedId(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -231,42 +269,46 @@ function Inner() {
       <header className="topbar">
         <div className="brand">
           <span className="logo" />
-          ccgraph <span className="v">v0.2</span>
+          agent-dag <span className="v">v1.0.3</span>
         </div>
         <div className="actions">
           <div className="search">
-            <span className="search-icon">⌕</span>
+            <span className="search-icon" aria-hidden>⌕</span>
             <input
+              ref={searchInputRef}
               type="text"
-              placeholder="search agent / cwd / tool…"
+              placeholder="Search agents, cwd, tools…"
               value={query}
               onChange={e => setQuery(e.target.value)}
               spellCheck={false}
+              aria-label="Filter the graph"
             />
-            {query && (
-              <button className="search-clear" aria-label="Clear" onClick={() => setQuery("")}>×</button>
-            )}
+            {query
+              ? <button className="search-clear" aria-label="Clear search" onClick={() => setQuery("")}>×</button>
+              : <kbd className="search-kbd" aria-hidden>/</kbd>}
           </div>
-          <span className="status">
-            <span className={`pill ${live ? "live" : "dead"}`}>{live ? "live" : "disconnected"}</span>
-            <span><span className="count">{sessionCount}</span> sessions</span>
-            <span><span className="count">{agentCount}</span> agents</span>
-            <span><span className="count">{stateRef.current.totalEvents}</span> events</span>
+          <span className="status" role="status">
+            <span className={`pill ${live ? "live" : "dead"}`} title={live ? "Receiving events" : "SSE disconnected"}>
+              {live ? "live" : "offline"}
+            </span>
+            <span className="stat" title="Distinct CC sessions"><span className="count">{sessionCount}</span><span className="lbl">sessions</span></span>
+            <span className="stat" title="Total agents (root + subagents)"><span className="count">{agentCount}</span><span className="lbl">agents</span></span>
+            <span className="stat" title="Total hook events received"><span className="count">{stateRef.current.totalEvents}</span><span className="lbl">events</span></span>
             {totalTokens.sum > 0 && (
-              <span title={`in:${totalTokens.inT}  out:${totalTokens.outT}  cache-r:${totalTokens.cacheR}  cache-c:${totalTokens.cacheC}`}>
-                <span className="count">{fmtTokens(totalTokens.sum)}</span> tokens
+              <span className="stat" title={`in:${totalTokens.inT.toLocaleString()}  out:${totalTokens.outT.toLocaleString()}  cache-r:${totalTokens.cacheR.toLocaleString()}  cache-c:${totalTokens.cacheC.toLocaleString()}`}>
+                <span className="count">{fmtTokens(totalTokens.sum)}</span><span className="lbl">tokens</span>
               </span>
             )}
           </span>
-          <button className="btn" onClick={() => setPaused(p => !p)} title="Space">
-            {paused ? `Resume${queueRef.current.length ? ` (${queueRef.current.length})` : ""}` : "Pause"}
+          <button className={`btn ${paused ? "warn" : ""}`} onClick={() => setPaused(p => !p)} title="Pause/resume live updates (Space)">
+            {paused ? `Resume${queueRef.current.length ? ` · ${queueRef.current.length}` : ""}` : "Pause"}
           </button>
-          <button className="btn" onClick={handleRelayout} title="R — auto-arrange">Re-layout</button>
-          <button className="btn" onClick={handleClear} title="C">Clear</button>
+          <button className="btn" onClick={handleRelayout} title="Auto-arrange — clear pins (R)">Re-layout</button>
+          <button className="btn" onClick={handleClear} title="Clear canvas (C)">Clear</button>
           <button
             className="btn icon-btn"
             onClick={() => setTheme(t => (t === "dark" ? "light" : "dark"))}
-            title="Toggle theme (T)"
+            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode (T)`}
             aria-label="Toggle theme"
           >
             {theme === "dark" ? "☀" : "☾"}
@@ -274,8 +316,15 @@ function Inner() {
         </div>
       </header>
 
+      {everConnected && !live && (
+        <div className="conn-banner" role="alert">
+          <span className="conn-dot" />
+          Lost connection to agent-dag server. Reconnecting…
+        </div>
+      )}
+
       <div className="canvas-wrap">
-        {agentCount === 0 && <EmptyHero />}
+        {agentCount === 0 && <EmptyHero live={live} everConnected={everConnected} />}
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -324,7 +373,8 @@ function Inner() {
   );
 }
 
-function EmptyHero() {
+function EmptyHero({ live, everConnected }: { live: boolean; everConnected: boolean }) {
+  const offline = !live;
   return (
     <div className="empty-hero">
       <div className="orbit-stack" aria-hidden>
@@ -333,12 +383,34 @@ function EmptyHero() {
         <div className="orbit r2"><span className="dot" /><span className="dot b" /></div>
         <div className="orbit r3"><span className="dot" /><span className="dot b" /></div>
       </div>
+      {offline ? (
+        <>
+          <h2>{everConnected ? "Disconnected from server" : "Server unreachable"}</h2>
+          <p>
+            The browser cannot reach <code>/events</code>. Check that
+            <code>agent-dag</code> is still running in your terminal, then this
+            page will resume automatically.
+          </p>
+        </>
+      ) : agentNoneCopy()}
+    </div>
+  );
+}
+
+function agentNoneCopy() {
+  return (
+    <>
       <h2>Waiting for Claude Code</h2>
       <p>
-        Run <code>claude</code> in any folder. As soon as a session sends an event,
-        a node appears here and grows as subagents fork and tools are called.
+        Run <code>claude</code> in any folder. As soon as a session sends an
+        event, a node appears here and grows as subagents fork and tools are
+        called.
       </p>
-    </div>
+      <p className="hint-row">
+        Not seeing anything? Make sure <code>agent-dag</code> is running and that
+        the hook is installed in <code>~/.claude/settings.json</code>.
+      </p>
+    </>
   );
 }
 
@@ -349,18 +421,21 @@ function EmptyDetail({ count }: { count: number }) {
       {count === 0 ? (
         <div className="hint">
           No data yet. Start a Claude Code session anywhere on this machine —
-          ccgraph is in <code>--all</code> mode and listens to every workspace.
+          agent-dag is in <code>--all</code> mode and listens to every workspace.
         </div>
       ) : (
         <div className="empty">Click an agent to see its tools.</div>
       )}
       <h3 style={{ marginTop: 4 }}>Shortcuts</h3>
-      <div className="row"><span className="k">drag</span><span className="v">move a node</span></div>
-      <div className="row"><span className="k">space</span><span className="v">pause / resume</span></div>
-      <div className="row"><span className="k">r</span><span className="v">re-arrange (clear pins)</span></div>
-      <div className="row"><span className="k">c</span><span className="v">clear canvas</span></div>
-      <div className="row"><span className="k">t</span><span className="v">toggle theme</span></div>
-      <div className="row"><span className="k">esc</span><span className="v">deselect node</span></div>
+      <div className="shortcuts">
+        <div className="sc"><kbd>drag</kbd><span>move a node</span></div>
+        <div className="sc"><kbd>/</kbd><span>focus search</span></div>
+        <div className="sc"><kbd>space</kbd><span>pause / resume</span></div>
+        <div className="sc"><kbd>R</kbd><span>re-arrange</span></div>
+        <div className="sc"><kbd>C</kbd><span>clear canvas</span></div>
+        <div className="sc"><kbd>T</kbd><span>toggle theme</span></div>
+        <div className="sc"><kbd>Esc</kbd><span>deselect</span></div>
+      </div>
     </>
   );
 }

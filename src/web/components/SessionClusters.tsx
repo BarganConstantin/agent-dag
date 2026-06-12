@@ -17,10 +17,18 @@ function selectClusters(s: ReactFlowState): Cluster[] {
   for (const n of s.nodeInternals.values()) {
     const d = n.data as AgentNodeData;
     if (!d?.sessionId) continue;
+    // Skip retiring agents — they're fading out. Including them keeps the
+    // cluster card at its old size while the nodes go invisible, which looks
+    // like the background "stays behind" the nodes.
+    if (d.exitAt != null) continue;
+    // Skip un-measured nodes (width/height still null) — falling back to a
+    // default size before React Flow has measured causes one frame of wrong
+    // cluster bounds.
+    if (n.width == null || n.height == null) continue;
     const x1 = n.position.x;
     const y1 = n.position.y;
-    const x2 = x1 + (n.width ?? 240);
-    const y2 = y1 + (n.height ?? 130);
+    const x2 = x1 + n.width;
+    const y2 = y1 + n.height;
     const existing = bySession.get(d.sessionId);
     if (!existing) {
       bySession.set(d.sessionId, { minX: x1, minY: y1, maxX: x2, maxY: y2, label: rootLabel(d) ?? d.sessionId });

@@ -1,10 +1,11 @@
-// ccgraph server: HTTP ingest + SSE broadcast + static file serving.
+// agent-dag server: HTTP ingest + SSE broadcast + static file serving.
 // Single-file pure Node HTTP server, zero deps.
 import { createServer } from "node:http";
-import { readFile, stat, mkdir, appendFile, open, truncate } from "node:fs/promises";
+import { readFile, stat, mkdir, appendFile, open, truncate, readdir, unlink } from "node:fs/promises";
 import { createReadStream, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { extname, join, resolve, dirname as pdirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -159,14 +160,54 @@ function handleSse(req, res) {
 function handleHealth(_req, res) {
   send(res, 200, {
     ok: true,
-    name: "ccgraph",
+    name: "agent-dag",
     seq: nextSeq - 1,
     clients: sseClients.size,
     uptimeMs: Math.round(process.uptime() * 1000),
   });
 }
 
-export async function startServer({ port = 4317, host = "127.0.0.1", persist = null } = {}) {
+function isProcessAlive(pid) {
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return e && e.code === "EPERM"; }
+}
+
+async function sweepStaleDiscovery() {
+  const dir = join(homedir(), ".claude", "agent-dag");
+  let files;
+  try { files = await readdir(dir); } catch { return 0; }
+  let removed = 0;
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    const p = join(dir, f);
+    try {
+      const d = JSON.parse(await readFile(p, "utf8"));
+      if (d && typeof d.pid === "number" && !isProcessAlive(d.pid)) {
+        await unlink(p).catch(() => {});
+        removed++;
+      }
+    } catch { /* corrupt — leave it */ }
+  }
+  return removed;
+}
+
+function randomPort(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+async function tryListen(server, port, host) {
+  return new Promise((res, rej) => {
+    server.once("error", rej);
+    server.listen(port, host, () => {
+      server.removeListener("error", rej);
+      res();
+    });
+  });
+}
+
+export async function startServer({ port = 4317, host = "127.0.0.1", persist = null, portRange = [4318, 4400] } = {}) {
+  const removed = await sweepStaleDiscovery();
+  if (removed > 0) console.log(`  swept ${removed} stale discovery file(s)`);
   if (persist) {
     persistPath = resolve(persist);
     try { await mkdir(pdirname(persistPath), { recursive: true }); } catch {}
@@ -200,24 +241,31 @@ export async function startServer({ port = 4317, host = "127.0.0.1", persist = n
     send(res, 405, { error: "method not allowed" });
   });
 
-  return new Promise((resolveStart, rejectStart) => {
-    server.once("error", rejectStart);
-    server.listen(port, host, () => {
-      server.removeListener("error", rejectStart);
-      resolveStart(server);
-    });
-  });
+  // Try requested port first, then up to 10 random ports from portRange.
+  const candidates = [port];
+  for (let i = 0; i < 10; i++) candidates.push(randomPort(portRange[0], portRange[1]));
+
+  for (const candidate of candidates) {
+    try {
+      await tryListen(server, candidate, host);
+      return server;
+    } catch (err) {
+      if (err && err.code === "EADDRINUSE") continue;
+      throw err;
+    }
+  }
+  throw Object.assign(new Error(`all ports tried — none available`), { code: "EADDRINUSE" });
 }
 
 // Allow running this file directly for dev.
-if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = Number(process.env.CCGRAPH_PORT ?? 4317);
   startServer({ port }).then(s => {
     const addr = s.address();
     const p = typeof addr === "object" && addr ? addr.port : port;
-    console.log(`ccgraph server: http://127.0.0.1:${p}`);
+    console.log(`agent-dag server: http://127.0.0.1:${p}`);
   }).catch(e => {
-    console.error("ccgraph server failed:", e.message);
+    console.error("agent-dag server failed:", e.message);
     process.exit(1);
   });
 }

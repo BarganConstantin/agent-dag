@@ -9,11 +9,14 @@ export interface LayoutOptions {
   direction?: "LR" | "TB";
   /** Nodes the user has dragged — keep their position; don't re-layout. */
   pinned?: Map<string, { x: number; y: number }>;
+  /** Real per-node sizes (measured by React Flow). Overrides defaults. */
+  measured?: Map<string, { width: number; height: number }>;
 }
 
 export function autoLayout(nodes: Node[], edges: Edge[], opts: LayoutOptions = {}): Node[] {
   const direction = opts.direction ?? "LR";
   const pinned = opts.pinned ?? new Map();
+  const measured = opts.measured ?? new Map();
 
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
@@ -26,7 +29,10 @@ export function autoLayout(nodes: Node[], edges: Edge[], opts: LayoutOptions = {
     edgesep: 30,
   });
 
-  for (const n of nodes) g.setNode(n.id, { width: NODE_W, height: NODE_H });
+  for (const n of nodes) {
+    const m = measured.get(n.id);
+    g.setNode(n.id, { width: m?.width ?? NODE_W, height: m?.height ?? NODE_H });
+  }
   for (const e of edges) g.setEdge(e.source, e.target);
 
   dagre.layout(g);
@@ -36,6 +42,9 @@ export function autoLayout(nodes: Node[], edges: Edge[], opts: LayoutOptions = {
     if (manual) return { ...n, position: manual };
     const p = g.node(n.id);
     if (!p) return n;
-    return { ...n, position: { x: p.x - NODE_W / 2, y: p.y - NODE_H / 2 } };
+    const m = measured.get(n.id);
+    const w = m?.width ?? NODE_W;
+    const h = m?.height ?? NODE_H;
+    return { ...n, position: { x: p.x - w / 2, y: p.y - h / 2 } };
   });
 }

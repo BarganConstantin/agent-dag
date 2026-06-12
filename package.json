@@ -1,23 +1,26 @@
 {
-  "name": "ccgraph",
-  "version": "0.1.0",
-  "description": "Live DAG of Claude Code agents — watch parallel subagents fork, call tools, return.",
+  "name": "agent-dag",
+  "version": "1.0.3",
+  "description": "Live DAG of Claude Code agents — watch parallel subagents fork, call tools, and return on one calm canvas.",
   "type": "module",
   "bin": {
-    "ccgraph": "bin/ccgraph.js"
+    "agent-dag": "bin/agent-dag.js"
   },
   "files": [
     "bin",
     "hook",
     "src/server",
-    "dist/web"
+    "dist/web",
+    "LICENSE",
+    "README.md"
   ],
   "scripts": {
     "dev:web": "vite",
     "build:web": "vite build",
     "dev:server": "node src/server/index.mjs",
-    "start": "node bin/ccgraph.js",
-    "build": "vite build"
+    "start": "node bin/agent-dag.js",
+    "build": "vite build",
+    "prepublishOnly": "vite build"
   },
   "engines": {
     "node": ">=18"
@@ -25,13 +28,18 @@
   "keywords": [
     "claude-code",
     "claude",
+    "anthropic",
     "agents",
+    "subagents",
     "visualization",
     "dashboard",
     "hooks",
     "observability",
-    "dag"
+    "dag",
+    "graph",
+    "live"
   ],
+  "author": "Bargan Constantin",
   "license": "MIT",
   "dependencies": {
     "open": "^10.1.0"

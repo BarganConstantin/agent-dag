@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ccgraph CLI entrypoint. Registers hooks, starts server, opens browser.
+// agent-dag CLI entrypoint. Registers hooks, starts server, opens browser.
 import { resolve, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -19,7 +19,7 @@ if (flags.help) {
 if (flags.uninstall) {
   const { uninstallHooks } = await import(pathToFileURL(join(PKG_ROOT, "src/server/installer.mjs")).href);
   const r = await uninstallHooks();
-  console.log(r.changed ? "ccgraph: hooks removed from ~/.claude/settings.json" : "ccgraph: no hooks to remove");
+  console.log(r.changed ? "agent-dag: hooks removed from ~/.claude/settings.json" : "agent-dag: no hooks to remove");
   process.exit(0);
 }
 
@@ -28,7 +28,7 @@ const workspace = flags.all ? "" : (flags.workspace ?? process.cwd());
 const openBrowser = flags.noOpen !== true;
 const persist = flags.noPersist
   ? null
-  : (flags.history ?? join(homedir(), ".claude", "ccgraph", "events.jsonl"));
+  : (flags.history ?? join(homedir(), ".claude", "agent-dag", "events.jsonl"));
 
 const { installHooks, writeDiscovery, removeDiscovery } =
   await import(pathToFileURL(join(PKG_ROOT, "src/server/installer.mjs")).href);
@@ -37,24 +37,24 @@ const { startServer } =
 
 const WEB_DIST = join(PKG_ROOT, "dist", "web", "index.html");
 if (!existsSync(WEB_DIST)) {
-  console.error("ccgraph: ui not built. run `npm run build` (or `pnpm build`) first.");
+  console.error("agent-dag: ui not built. run `npm run build` (or `pnpm build`) first.");
   process.exit(1);
 }
 
-console.log("ccgraph");
-console.log("  workspace:", workspace === "" ? "(all)" : workspace);
+console.log(`
+  ╔══════════════════════════════════╗
+  ║  ◉  agent-dag  v1.0.3           ║
+  ║     live DAG · Claude agents    ║
+  ╚══════════════════════════════════╝
+`);
+console.log("  workspace :", workspace === "" ? "(all)" : workspace);
 
 const { settingsPath, hookPath, events } = await installHooks();
-console.log("  hook installed:", hookPath);
-console.log("  events:", events.join(", "));
-console.log("  settings:", settingsPath);
+console.log("  hooks     :", hookPath);
+console.log("  settings  :", settingsPath);
 
 const server = await startServer({ port, persist }).catch(err => {
-  if (err && err.code === "EADDRINUSE") {
-    console.error(`\nccgraph: port ${port} in use. Try --port <N>.`);
-  } else {
-    console.error("ccgraph: server failed:", err.message);
-  }
+  console.error("agent-dag: server failed:", err.message);
   process.exit(1);
 });
 
@@ -103,19 +103,19 @@ function parseArgs(args) {
 }
 
 function printHelp() {
-  process.stdout.write(`ccgraph — live DAG of Claude Code agents
+  process.stdout.write(`agent-dag — live DAG of Claude Code agents
 
 Usage:
-  ccgraph [options]
+  agent-dag [options]
 
 Options:
-  -p, --port <number>      Port for the server (default: 4317)
+  -p, --port <number>      Preferred port (default: 4317; falls back to random 4318–4400)
       --no-open            Don't open the browser automatically
       --workspace <path>   Workspace root (default: cwd)
       --all                Capture sessions from ALL workspaces (machine-wide)
-      --history <path>     Override events log file (default: ~/.claude/ccgraph/events.jsonl)
+      --history <path>     Override events log file (default: ~/.claude/agent-dag/events.jsonl)
       --no-persist         Don't write or replay events log (RAM-only)
-      --uninstall          Remove ccgraph hook entries from ~/.claude/settings.json
+      --uninstall          Remove agent-dag hook entries from ~/.claude/settings.json
   -h, --help               Show this help
 `);
 }

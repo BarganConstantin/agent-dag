@@ -1,6 +1,6 @@
 // Idempotent hook installer for ~/.claude/settings.json.
 // Adds a single command-hook entry per CC hook event pointing at our forwarder.
-// Re-runs are safe (entries are tagged with __ccgraph and de-duped).
+// Re-runs are safe (entries are tagged with __agent-dag and de-duped).
 import { readFile, writeFile, mkdir, copyFile, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir, platform } from "node:os";
@@ -13,7 +13,7 @@ const PKG_ROOT = resolve(__dirname, "..", "..");
 const HOME = homedir();
 const CLAUDE_DIR = join(HOME, ".claude");
 const SETTINGS = join(CLAUDE_DIR, "settings.json");
-const CCGRAPH_DIR = join(CLAUDE_DIR, "ccgraph");
+const AGENT_DAG_DIR = join(CLAUDE_DIR, "agent-dag");
 
 export const HOOK_EVENTS = [
   "SessionStart",
@@ -28,7 +28,7 @@ export const HOOK_EVENTS = [
   "Notification",
 ];
 
-const MARK_KEY = "__ccgraph";
+const MARK_KEY = "__agent-dag";
 
 function hookCommand(installedHookPath) {
   // process.execPath = absolute path to current node (works on Win + *nix).
@@ -45,9 +45,9 @@ async function readJsonSafe(p) {
 }
 
 async function installHookScript() {
-  await ensureDir(CCGRAPH_DIR);
+  await ensureDir(AGENT_DAG_DIR);
   const src = join(PKG_ROOT, "hook", "hook.js");
-  const dst = join(CCGRAPH_DIR, "hook.js");
+  const dst = join(AGENT_DAG_DIR, "hook.js");
   await copyFile(src, dst);
   return dst;
 }
@@ -97,8 +97,8 @@ export async function uninstallHooks() {
 }
 
 export async function writeDiscovery({ port, workspace }) {
-  await ensureDir(CCGRAPH_DIR);
-  const file = join(CCGRAPH_DIR, `${process.pid}.json`);
+  await ensureDir(AGENT_DAG_DIR);
+  const file = join(AGENT_DAG_DIR, `${process.pid}.json`);
   const data = {
     pid: process.pid,
     port,
@@ -113,4 +113,4 @@ export async function removeDiscovery(file) {
   try { await unlink(file); } catch {}
 }
 
-export { CCGRAPH_DIR, SETTINGS };
+export { AGENT_DAG_DIR, SETTINGS };

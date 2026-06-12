@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// ccgraph hook forwarder. Claude Code invokes this as a command hook.
-// It reads stdin (CC event JSON), finds the matching ccgraph server via
-// per-workspace discovery files in ~/.claude/ccgraph/, and forwards the
+// agent-dag hook forwarder. Claude Code invokes this as a command hook.
+// It reads stdin (CC event JSON), finds the matching agent-dag server via
+// per-workspace discovery files in ~/.claude/agent-dag/, and forwards the
 // payload to it via HTTP POST. Dead instances are cleaned up.
 "use strict";
 
@@ -13,7 +13,7 @@ const os = require("os");
 // Hard cap so a stuck server can never wedge Claude Code.
 setTimeout(() => process.exit(0), 1500);
 
-const DIR = path.join(os.homedir(), ".claude", "ccgraph");
+const DIR = path.join(os.homedir(), ".claude", "agent-dag");
 const IS_WIN = process.platform === "win32";
 
 function normPath(p) {
@@ -23,8 +23,10 @@ function normPath(p) {
 }
 
 function isAlive(pid) {
-  if (IS_WIN) return true; // signal 0 unreliable on win
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  // process.kill(pid, 0) works on Windows in Node 18+:
+  //   ESRCH => no such process, EPERM => exists but not ours (still alive).
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return e && e.code === "EPERM"; }
 }
 
 let input = "";
@@ -54,7 +56,7 @@ process.stdin.on("end", () => {
       continue;
     }
 
-    // Empty workspace = match-all (used by `ccgraph --all`).
+    // Empty workspace = match-all (used by `agent-dag --all`).
     if (d.workspace === "") {
       matches.push({ d, wsLen: 0 });
       continue;
