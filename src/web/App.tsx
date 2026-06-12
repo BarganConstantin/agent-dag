@@ -8,6 +8,8 @@ import ReactFlow, {
   ReactFlowProvider,
 } from "reactflow";
 import AgentNode from "./components/AgentNode";
+import ToolModal from "./components/ToolModal";
+import SessionClusters from "./components/SessionClusters";
 import { autoLayout } from "./layout";
 import { applyEvent, initialState, sessionHue, type GraphState } from "./reducer";
 import type { AgentNodeData, HookEnvelope, ToolCall } from "./types";
@@ -67,6 +69,7 @@ function Inner() {
   const [, force] = useState(0);
   const rerender = useCallback(() => force(x => x + 1), []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [openedToolId, setOpenedToolId] = useState<string | null>(null);
   const [live, setLive] = useState(false);
   const [paused, setPaused] = useState(false);
   const queueRef = useRef<HookEnvelope[]>([]);
@@ -118,6 +121,11 @@ function Inner() {
   );
 
   const selected = selectedId ? stateRef.current.agents.get(selectedId) : null;
+  const openedTool = openedToolId
+    ? Array.from(stateRef.current.agents.values())
+        .flatMap(a => a.tools)
+        .find(t => t.id === openedToolId) ?? null
+    : null;
 
   const handleClear = useCallback(async () => {
     try { await fetch("/api/clear", { method: "POST" }); } catch {}
@@ -200,6 +208,7 @@ function Inner() {
           }}
         >
           <Background gap={28} size={1} color={cssVar("--grid-line")} />
+          <SessionClusters />
           <Controls showInteractive={false} />
           <MiniMap
             zoomable
@@ -218,8 +227,12 @@ function Inner() {
       </div>
 
       <aside className="detail">
-        {selected ? <Detail agent={selected} now={now} /> : <EmptyDetail count={agentCount} />}
+        {selected
+          ? <Detail agent={selected} now={now} onOpenTool={setOpenedToolId} />
+          : <EmptyDetail count={agentCount} />}
       </aside>
+
+      {openedTool && <ToolModal tool={openedTool} onClose={() => setOpenedToolId(null)} />}
     </div>
   );
 }
@@ -265,7 +278,15 @@ function EmptyDetail({ count }: { count: number }) {
   );
 }
 
-function Detail({ agent, now }: { agent: AgentNodeData; now: number }) {
+function Detail({
+  agent,
+  now,
+  onOpenTool,
+}: {
+  agent: AgentNodeData;
+  now: number;
+  onOpenTool: (toolId: string) => void;
+}) {
   const elapsedSec = Math.max(0, Math.floor(((agent.endedAt ?? now) - agent.startedAt) / 1000));
   return (
     <>
@@ -279,10 +300,17 @@ function Detail({ agent, now }: { agent: AgentNodeData; now: number }) {
         <div className="row"><span className="k">session</span><span className="v">{agent.sessionId.slice(0, 8)}…</span></div>
       </div>
 
-      {agent.firstPrompt && (
+      {agent.prompts.length > 0 && (
         <>
-          <h3>First prompt</h3>
-          <div className="hint" style={{ borderStyle: "solid" }}>{agent.firstPrompt}</div>
+          <h3>Prompts ({agent.prompts.length})</h3>
+          <div className="prompts">
+            {agent.prompts.map((pr, i) => (
+              <div className="prompt-entry" key={i}>
+                <div className="prompt-time">{new Date(pr.at).toLocaleTimeString()}</div>
+                <div className="prompt-text">{pr.text}</div>
+              </div>
+            ))}
+          </div>
         </>
       )}
 
@@ -290,24 +318,24 @@ function Detail({ agent, now }: { agent: AgentNodeData; now: number }) {
       {agent.tools.length === 0 && <div className="empty">No tool calls yet.</div>}
       <div>
         {agent.tools.slice().reverse().map(t => (
-          <ToolRow key={t.id} t={t} now={now} />
+          <ToolRow key={t.id} t={t} now={now} onClick={() => onOpenTool(t.id)} />
         ))}
       </div>
     </>
   );
 }
 
-function ToolRow({ t, now }: { t: ToolCall; now: number }) {
+function ToolRow({ t, now, onClick }: { t: ToolCall; now: number; onClick: () => void }) {
   const status = t.endedAt == null ? "inflight" : t.ok === false ? "err" : "done";
   const dur = (t.endedAt ?? now) - t.startedAt;
   const durLabel = t.endedAt == null ? "…" : dur < 1000 ? `${dur}ms` : `${(dur / 1000).toFixed(1)}s`;
   return (
-    <div className="tool" title={t.inputPreview || t.name}>
+    <button className="tool clickable" title={t.inputPreview || t.name} onClick={onClick}>
       <span className="name">
         <span className={`status-dot ${status}`} />
         {t.name}
       </span>
       <span style={{ color: "var(--muted)" }}>{durLabel}</span>
-    </div>
+    </button>
   );
 }

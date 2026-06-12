@@ -48,6 +48,7 @@ function ensureRoot(state: GraphState, sessionId: string, now: number, synthetic
     state: "active",
     startedAt: now,
     tools: [],
+    prompts: [],
     toolCount: 0,
     childCount: 0,
     synthetic,
@@ -91,6 +92,7 @@ function ensureAgent(state: GraphState, p: HookPayload, now: number): AgentNodeD
     state: "active",
     startedAt: now,
     tools: [],
+    prompts: [],
     cwd: p.cwd,
     cwdBasename: basename(p.cwd),
     toolCount: 0,
@@ -147,7 +149,11 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
     }
     case "UserPromptSubmit": {
       a.state = "active";
-      if (!a.firstPrompt) a.firstPrompt = shortPreview(p.prompt ?? p.message, 120);
+      const text = (typeof p.prompt === "string" ? p.prompt : typeof p.message === "string" ? p.message : "") ?? "";
+      if (text) {
+        a.prompts.push({ at: now, text });
+        if (!a.firstPrompt) a.firstPrompt = shortPreview(text, 120);
+      }
       break;
     }
     case "PreToolUse": {
@@ -155,7 +161,9 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
       const tc: ToolCall = {
         id,
         name: p.tool_name ?? "?",
+        input: p.tool_input,
         inputPreview: shortPreview(p.tool_input),
+        agentId: a.id,
         startedAt: now,
       };
       a.tools.push(tc);
@@ -173,6 +181,7 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
       if (tc) {
         tc.endedAt = now;
         tc.ok = name === "PostToolUse";
+        tc.response = p.tool_response;
         if (name === "PostToolUseFailure") tc.errorPreview = shortPreview(p.tool_response);
         state.toolIndex.delete(id!);
         const ownerId = state.toolOwner.get(id!);

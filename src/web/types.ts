@@ -6,10 +6,19 @@ export interface ToolCall {
   id: string;                 // tool_use_id when available, else generated
   name: string;
   inputPreview: string;
+  input?: unknown;            // full input (kept for modal)
+  response?: unknown;         // full response (kept for modal)
   startedAt: number;
   endedAt?: number;
   ok?: boolean;
   errorPreview?: string;
+  /** Owning agent id, so callers (modal) can navigate back to source. */
+  agentId?: string;
+}
+
+export interface PromptEntry {
+  at: number;
+  text: string;
 }
 
 export interface AgentNodeData {
@@ -25,6 +34,7 @@ export interface AgentNodeData {
   cwd?: string;
   cwdBasename?: string;
   firstPrompt?: string;
+  prompts: PromptEntry[];
   toolCount: number;
   /** When true, we synthesised this node because a child arrived before any
    *  event from this agent itself (e.g. CC was already running). */

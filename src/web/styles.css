@@ -542,7 +542,205 @@ button.btn.icon-btn {
 
 /* React Flow edge label background — match theme */
 .react-flow__edge-textbg { fill: var(--bg-soft); fill-opacity: 0.9; }
-.react-flow__edge-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.react-flow__edge-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; fill: var(--text); }
+
+/* ---------------- session clusters ---------------- */
+
+.session-clusters {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.cluster-card {
+  position: absolute;
+  border-radius: 18px;
+  border: 1px dashed transparent;
+  transition: opacity 200ms ease;
+  overflow: visible;
+}
+.cluster-label {
+  position: absolute;
+  top: 6px; left: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transform-origin: left top;
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+}
+
+/* ---------------- prompt history ---------------- */
+
+.prompts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.prompt-entry {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-soft);
+}
+.prompt-time {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.prompt-text {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---------------- clickable tool row ---------------- */
+
+button.tool.clickable {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+  font: inherit;
+  padding: 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  border-radius: 4px;
+  transition: background 120ms;
+}
+button.tool.clickable:hover { background: var(--bg-soft); padding-left: 6px; padding-right: 6px; }
+button.tool.clickable:last-child { border-bottom: none; }
+
+/* ---------------- tool detail modal ---------------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(5,6,9,0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: fadeIn 140ms ease-out;
+}
+:root[data-theme="light"] .modal-backdrop { background: rgba(15,23,42,0.30); }
+
+.modal {
+  width: min(820px, 92vw);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-2), 0 0 0 1px rgba(125,211,252,0.10);
+  overflow: hidden;
+  animation: popIn 180ms cubic-bezier(0.22,1,0.36,1);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-soft);
+}
+.modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.modal-title .status-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+}
+.modal-title .status-dot.inflight { background: var(--inflight); animation: pulse 1.2s infinite; }
+.modal-title .status-dot.done { background: var(--ok); }
+.modal-title .status-dot.err  { background: var(--err); }
+.modal-tool-name {
+  font-weight: 600;
+  font-size: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.modal-tool-id {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.modal-dur {
+  color: var(--muted);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.modal-body {
+  padding: 16px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.modal-section h4 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.modal-section .err-tag {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--err);
+  background: rgba(252,165,165,0.10);
+  border: 1px solid rgba(252,165,165,0.30);
+}
+.modal-section pre {
+  margin: 0;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+}
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes popIn  { from { opacity: 0; transform: translateY(4px) scale(0.985); } to { opacity: 1; transform: none; } }
 
 /* ---------------- empty-state hero ---------------- */
 
