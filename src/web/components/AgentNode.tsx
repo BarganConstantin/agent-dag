@@ -26,13 +26,14 @@ export default function AgentNode({ data, selected }: NodeProps<AgentNodeData & 
   const cls = [
     "agent-node",
     `state-${data.state}`,
+    data.synthetic ? "synthetic" : "",
     selected ? "selected" : "",
   ].filter(Boolean).join(" ");
 
   const inflight = data.tools.filter(t => !t.endedAt).length;
   const recent = data.tools.slice(-MAX_CHIPS);
   const hue = sessionHue(data.sessionId);
-  const accent = `hsl(${hue} 70% 65%)`;
+  const accent = `hsl(${hue} 70% 60%)`;
 
   return (
     <div className={cls} style={{ "--accent": accent } as React.CSSProperties}>
@@ -43,6 +44,7 @@ export default function AgentNode({ data, selected }: NodeProps<AgentNodeData & 
         <div className="title">
           <StatePill state={data.state} />
           <span className="label" title={data.cwd}>{data.label}</span>
+          {data.synthetic && <span className="synth-tag" title="No SessionStart captured — synthesised">?</span>}
         </div>
         <div className="time" title={`Started ${new Date(data.startedAt).toLocaleTimeString()}`}>
           {elapsed(data.startedAt, data.endedAt, now)}
@@ -51,8 +53,20 @@ export default function AgentNode({ data, selected }: NodeProps<AgentNodeData & 
 
       <div className="sub">
         {data.kind === "root" ? "session" : "subagent"}
-        {data.cwdBasename && data.kind === "root" ? null : data.cwdBasename ? ` · ${data.cwdBasename}` : ""}
+        {data.childCount > 0 && (
+          <span className="spawn-badge" title={`${data.childCount} subagents spawned`}>→ {data.childCount}</span>
+        )}
+        {data.cwdBasename && data.kind === "subagent" ? ` · ${data.cwdBasename}` : ""}
       </div>
+
+      {data.inFlightTool && (
+        <div className="now-running" title={data.inFlightTool.inputPreview || data.inFlightTool.name}>
+          <span className="now-dot" />
+          <span className="now-label">now</span>
+          <span className="now-tool">{data.inFlightTool.name}</span>
+          <span className="now-time">{Math.max(0, now - data.inFlightTool.startedAt)}ms</span>
+        </div>
+      )}
 
       <div className="chips">
         {recent.length === 0 && <span className="chips-empty">no tools yet</span>}

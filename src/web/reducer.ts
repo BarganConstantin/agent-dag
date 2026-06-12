@@ -4,6 +4,8 @@ import type { AgentNodeData, HookEnvelope, HookPayload, ToolCall } from "./types
 export interface GraphState {
   agents: Map<string, AgentNodeData>;
   toolIndex: Map<string, ToolCall>;
+  /** tool_use_id → owning agent.id, so PostToolUse can settle the right agent's tool. */
+  toolOwner: Map<string, string>;
   lastSeq: number;
   totalEvents: number;
 }
@@ -12,6 +14,7 @@ export function initialState(): GraphState {
   return {
     agents: new Map(),
     toolIndex: new Map(),
+    toolOwner: new Map(),
     lastSeq: 0,
     totalEvents: 0,
   };
@@ -29,36 +32,73 @@ function agentIdFor(p: HookPayload): string {
   return parent ? `${session}::${parent}` : session;
 }
 
-function parentAgentIdFor(p: HookPayload): string | undefined {
-  return p.parent_tool_use_id ? p.session_id : undefined;
+function rootAgentId(sessionId: string): string {
+  return sessionId;
+}
+
+function ensureRoot(state: GraphState, sessionId: string, now: number, synthetic: boolean): AgentNodeData {
+  const id = rootAgentId(sessionId);
+  let a = state.agents.get(id);
+  if (a) return a;
+  a = {
+    id,
+    sessionId,
+    label: "session",
+    kind: "root",
+    state: "active",
+    startedAt: now,
+    tools: [],
+    toolCount: 0,
+    childCount: 0,
+    synthetic,
+    inFlightTool: null,
+  };
+  state.agents.set(id, a);
+  return a;
 }
 
 function ensureAgent(state: GraphState, p: HookPayload, now: number): AgentNodeData {
+  const sessionId = p.session_id ?? "unknown";
   const id = agentIdFor(p);
-  let a = state.agents.get(id);
-  if (a) {
-    // Late-arriving cwd / subagent_type fills in.
-    if (!a.cwd && p.cwd) { a.cwd = p.cwd; a.cwdBasename = basename(p.cwd); }
-    if (a.kind === "subagent" && p.subagent_type && (a.label === "subagent" || !a.label)) a.label = p.subagent_type;
-    return a;
+  const isSub = !!p.parent_tool_use_id;
+
+  // Always make sure the root for this session exists.
+  const root = ensureRoot(state, sessionId, now, /*synthetic*/ isSub);
+  if (root.synthetic && !isSub) {
+    // First non-subagent event for this session — mark it real.
+    root.synthetic = false;
+    root.startedAt = now;
+  }
+  if (!isSub) {
+    if (!root.cwd && p.cwd) { root.cwd = p.cwd; root.cwdBasename = basename(p.cwd); }
+    if (root.label === "session" && p.cwd) root.label = basename(p.cwd) ?? "session";
+    return root;
   }
 
-  const isSub = !!p.parent_tool_use_id;
-  const session = p.session_id ?? "unknown";
+  // Subagent path.
+  let a = state.agents.get(id);
+  if (a) {
+    if (!a.cwd && p.cwd) { a.cwd = p.cwd; a.cwdBasename = basename(p.cwd); }
+    if (p.subagent_type && (a.label === "subagent" || !a.label)) a.label = p.subagent_type;
+    return a;
+  }
   a = {
     id,
-    sessionId: session,
-    label: isSub ? (p.subagent_type ?? "subagent") : (basename(p.cwd) ?? "session"),
-    kind: isSub ? "subagent" : "root",
-    parentId: parentAgentIdFor(p),
+    sessionId,
+    label: p.subagent_type ?? "subagent",
+    kind: "subagent",
+    parentId: root.id,
     state: "active",
     startedAt: now,
     tools: [],
     cwd: p.cwd,
     cwdBasename: basename(p.cwd),
     toolCount: 0,
+    childCount: 0,
+    inFlightTool: null,
   };
   state.agents.set(id, a);
+  root.childCount += 1;
   return a;
 }
 
@@ -71,6 +111,16 @@ function shortPreview(input: any, max = 80): string {
   } catch {
     return String(input);
   }
+}
+
+function refreshInFlight(a: AgentNodeData): void {
+  // Most recently started, not-yet-ended tool.
+  let latest: ToolCall | null = null;
+  for (let i = a.tools.length - 1; i >= 0; i--) {
+    const t = a.tools[i];
+    if (t.endedAt == null) { latest = t; break; }
+  }
+  a.inFlightTool = latest;
 }
 
 export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
@@ -112,6 +162,8 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
       a.toolCount += 1;
       a.state = "active";
       state.toolIndex.set(id, tc);
+      state.toolOwner.set(id, a.id);
+      refreshInFlight(a);
       break;
     }
     case "PostToolUse":
@@ -123,6 +175,12 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
         tc.ok = name === "PostToolUse";
         if (name === "PostToolUseFailure") tc.errorPreview = shortPreview(p.tool_response);
         state.toolIndex.delete(id!);
+        const ownerId = state.toolOwner.get(id!);
+        state.toolOwner.delete(id!);
+        if (ownerId) {
+          const owner = state.agents.get(ownerId);
+          if (owner) refreshInFlight(owner);
+        }
       }
       break;
     }
@@ -135,12 +193,14 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
     case "SubagentStop": {
       a.state = "done";
       a.endedAt = now;
+      refreshInFlight(a);
       break;
     }
     case "Stop":
     case "SessionEnd": {
       a.state = "done";
       a.endedAt = now;
+      refreshInFlight(a);
       break;
     }
     case "Notification": {

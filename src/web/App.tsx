@@ -12,6 +12,11 @@ import { autoLayout } from "./layout";
 import { applyEvent, initialState, sessionHue, type GraphState } from "./reducer";
 import type { AgentNodeData, HookEnvelope, ToolCall } from "./types";
 
+function cssVar(name: string): string {
+  if (typeof window === "undefined") return "";
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "";
+}
+
 const nodeTypes = { agent: AgentNode };
 
 function snapshotToFlow(
@@ -30,13 +35,19 @@ function snapshotToFlow(
     });
     if (a.parentId && state.agents.has(a.parentId)) {
       const hue = sessionHue(a.sessionId);
+      const stroke = a.state === "active" ? `hsl(${hue} 80% 72%)` : `hsl(${hue} 50% 55%)`;
       edges.push({
         id: `e:${a.parentId}->${a.id}`,
         source: a.parentId,
         target: a.id,
         animated: a.state === "active",
         type: "smoothstep",
-        style: { stroke: a.state === "active" ? `hsl(${hue} 80% 75%)` : `hsl(${hue} 50% 55%)` },
+        label: a.label,
+        labelBgPadding: [6, 3],
+        labelBgBorderRadius: 4,
+        labelStyle: { fontSize: 10, fill: stroke, fontFamily: "ui-monospace, monospace" },
+        labelBgStyle: { fill: "var(--bg-soft)", fillOpacity: 0.85, stroke, strokeWidth: 0.5 },
+        style: { stroke, strokeWidth: a.state === "active" ? 2 : 1.5 },
       });
     }
   }
@@ -61,6 +72,14 @@ function Inner() {
   const queueRef = useRef<HookEnvelope[]>([]);
   const [now, setNow] = useState(Date.now());
   const pinnedRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    if (typeof window === "undefined") return "dark";
+    return (window.localStorage.getItem("ccgraph.theme") as "dark" | "light") ?? "dark";
+  });
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { window.localStorage.setItem("ccgraph.theme", theme); } catch {}
+  }, [theme]);
 
   // SSE subscription
   useEffect(() => {
@@ -120,6 +139,7 @@ function Inner() {
       if (e.key === " ") { e.preventDefault(); setPaused(p => !p); }
       if (e.key === "c" || e.key === "C") handleClear();
       if (e.key === "r" || e.key === "R") handleRelayout();
+      if (e.key === "t" || e.key === "T") setTheme(t => (t === "dark" ? "light" : "dark"));
       if (e.key === "Escape") setSelectedId(null);
     };
     window.addEventListener("keydown", onKey);
@@ -148,6 +168,14 @@ function Inner() {
           </button>
           <button className="btn" onClick={handleRelayout} title="R — auto-arrange">Re-layout</button>
           <button className="btn" onClick={handleClear} title="C">Clear</button>
+          <button
+            className="btn icon-btn"
+            onClick={() => setTheme(t => (t === "dark" ? "light" : "dark"))}
+            title="Toggle theme (T)"
+            aria-label="Toggle theme"
+          >
+            {theme === "dark" ? "☀" : "☾"}
+          </button>
         </div>
       </header>
 
@@ -171,20 +199,20 @@ function Inner() {
             pinnedRef.current.set(n.id, { x: n.position.x, y: n.position.y });
           }}
         >
-          <Background gap={28} size={1} color="#1a1d24" />
+          <Background gap={28} size={1} color={cssVar("--grid-line")} />
           <Controls showInteractive={false} />
           <MiniMap
             zoomable
             pannable
             nodeColor={n => {
               const d = n.data as AgentNodeData;
-              if (d.state === "err") return "#fca5a5";
-              if (d.state === "active") return "#f0abfc";
-              return "#86efac";
+              if (d.state === "err") return cssVar("--err");
+              if (d.state === "active") return cssVar("--inflight");
+              return cssVar("--ok");
             }}
             nodeStrokeWidth={2}
-            maskColor="rgba(11,12,16,0.85)"
-            style={{ background: "#14161b", border: "1px solid #1f2229", borderRadius: 8 }}
+            maskColor={cssVar("--minimap-mask")}
+            style={{ background: cssVar("--panel"), border: `1px solid ${cssVar("--line")}`, borderRadius: 8 }}
           />
         </ReactFlow>
       </div>
@@ -199,7 +227,12 @@ function Inner() {
 function EmptyHero() {
   return (
     <div className="empty-hero">
-      <div className="ring" />
+      <div className="orbit-stack" aria-hidden>
+        <div className="core" />
+        <div className="orbit r1"><span className="dot" /><span className="dot b" /></div>
+        <div className="orbit r2"><span className="dot" /><span className="dot b" /></div>
+        <div className="orbit r3"><span className="dot" /><span className="dot b" /></div>
+      </div>
       <h2>Waiting for Claude Code</h2>
       <p>
         Run <code>claude</code> in any folder. As soon as a session sends an event,
@@ -226,6 +259,7 @@ function EmptyDetail({ count }: { count: number }) {
       <div className="row"><span className="k">space</span><span className="v">pause / resume</span></div>
       <div className="row"><span className="k">r</span><span className="v">re-arrange (clear pins)</span></div>
       <div className="row"><span className="k">c</span><span className="v">clear canvas</span></div>
+      <div className="row"><span className="k">t</span><span className="v">toggle theme</span></div>
       <div className="row"><span className="k">esc</span><span className="v">deselect node</span></div>
     </>
   );
