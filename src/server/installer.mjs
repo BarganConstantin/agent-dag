@@ -29,11 +29,32 @@ export const HOOK_EVENTS = [
 ];
 
 const MARK_KEY = "__agent-dag";
+// Legacy marks from earlier names — purged on every install/uninstall so
+// duplicate forwarders don't pile up when the project gets renamed.
+const LEGACY_MARKS = ["__ccgraph", "__agent-flow"];
+// ~/.claude/<name>/hook.js paths used by old releases. Any unmarked entry
+// pointing into one of these is recognised as ours and removed.
+const LEGACY_DIRS = ["ccgraph", "agent-flow", "agent-dag"];
 
 function hookCommand(installedHookPath) {
   // process.execPath = absolute path to current node (works on Win + *nix).
   const node = process.execPath;
   return `"${node}" "${installedHookPath}"`;
+}
+
+function isOurEntry(g) {
+  if (!g || typeof g !== "object") return false;
+  if (g[MARK_KEY] === true) return true;
+  for (const k of LEGACY_MARKS) if (g[k] === true) return true;
+  // Heuristic: command points at ~/.claude/<legacy-dir>/hook.js.
+  const cmds = Array.isArray(g.hooks) ? g.hooks : [];
+  for (const h of cmds) {
+    const c = typeof h?.command === "string" ? h.command : "";
+    for (const dir of LEGACY_DIRS) {
+      if (c.includes(`.claude/${dir}/hook.js`) || c.includes(`.claude\\${dir}\\hook.js`)) return true;
+    }
+  }
+  return false;
 }
 
 async function ensureDir(p) {
@@ -61,7 +82,7 @@ function buildHookEntry(command) {
 
 function dedupeOurEntries(group) {
   if (!Array.isArray(group)) return [];
-  return group.filter(g => !(g && typeof g === "object" && g[MARK_KEY] === true));
+  return group.filter(g => !isOurEntry(g));
 }
 
 export async function installHooks() {

@@ -24,7 +24,11 @@ if (flags.uninstall) {
 }
 
 const port = Number(flags.port ?? process.env.AGENT_DAG_PORT ?? 4317);
-const workspace = flags.all ? "" : (flags.workspace ?? process.cwd());
+// Default = machine-wide (capture every CC session on this box). Pass
+// `--workspace <path>` (or `--scope`) to restrict to a single tree.
+const workspace = flags.workspace != null
+  ? flags.workspace
+  : (flags.scope ? process.cwd() : "");
 const openBrowser = flags.noOpen !== true;
 const persist = flags.noPersist
   ? null
@@ -163,7 +167,8 @@ function parseArgs(args) {
     else if (a === "--no-open") out.noOpen = true;
     else if (a === "--uninstall") out.uninstall = true;
     else if (a === "--workspace") out.workspace = args[++i];
-    else if (a === "--all") out.all = true;
+    else if (a === "--scope") out.scope = true;
+    else if (a === "--all") out.all = true; // legacy no-op (now default)
     else if (a === "--no-persist") out.noPersist = true;
     else if (a === "--history") out.history = args[++i];
   }
@@ -179,8 +184,9 @@ Usage:
 Options:
   -p, --port <number>      Preferred port (default: 4317; falls back to random 4318–4400)
       --no-open            Don't open the browser automatically
-      --workspace <path>   Workspace root (default: cwd)
-      --all                Capture sessions from ALL workspaces (machine-wide)
+      --workspace <path>   Only capture sessions whose cwd is inside <path>
+      --scope              Restrict to current working directory
+      --all                Capture every Claude Code session (default)
       --history <path>     Override events log file (default: ~/.claude/agent-dag/events.jsonl)
       --no-persist         Don't write or replay events log (RAM-only)
       --uninstall          Remove agent-dag hook entries from ~/.claude/settings.json
