@@ -1,26 +1,82 @@
 import React from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
-import type { AgentNodeData } from "../types";
+import { sessionHue } from "../reducer";
+import type { AgentNodeData, ToolCall } from "../types";
 
-export default function AgentNode({ data, selected }: NodeProps<AgentNodeData>) {
+const MAX_CHIPS = 6;
+
+function elapsed(start: number, end: number | undefined, now: number): string {
+  const ms = (end ?? now) - start;
+  if (ms < 1000) return `${Math.max(0, ms)}ms`;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  return `${m}m ${String(rs).padStart(2, "0")}s`;
+}
+
+function chipClass(tc: ToolCall): string {
+  if (tc.endedAt == null) return "tool-chip inflight";
+  if (tc.ok === false) return "tool-chip err";
+  return "tool-chip done";
+}
+
+export default function AgentNode({ data, selected }: NodeProps<AgentNodeData & { now: number }>) {
+  const now = data.now ?? Date.now();
   const cls = [
     "agent-node",
     `state-${data.state}`,
     selected ? "selected" : "",
   ].filter(Boolean).join(" ");
 
-  const inflightCount = data.tools.filter(t => !t.endedAt).length;
+  const inflight = data.tools.filter(t => !t.endedAt).length;
+  const recent = data.tools.slice(-MAX_CHIPS);
+  const hue = sessionHue(data.sessionId);
+  const accent = `hsl(${hue} 70% 65%)`;
 
   return (
-    <div className={cls}>
+    <div className={cls} style={{ "--accent": accent } as React.CSSProperties}>
+      <span className="accent-stripe" />
       <Handle type="target" position={Position.Left} style={{ background: "transparent", border: "none" }} />
-      <div className="title">{data.label}</div>
-      <div className="sub">{data.kind === "root" ? "session" : "subagent"}</div>
+
+      <div className="head">
+        <div className="title">
+          <StatePill state={data.state} />
+          <span className="label" title={data.cwd}>{data.label}</span>
+        </div>
+        <div className="time" title={`Started ${new Date(data.startedAt).toLocaleTimeString()}`}>
+          {elapsed(data.startedAt, data.endedAt, now)}
+        </div>
+      </div>
+
+      <div className="sub">
+        {data.kind === "root" ? "session" : "subagent"}
+        {data.cwdBasename && data.kind === "root" ? null : data.cwdBasename ? ` · ${data.cwdBasename}` : ""}
+      </div>
+
+      <div className="chips">
+        {recent.length === 0 && <span className="chips-empty">no tools yet</span>}
+        {recent.map(t => (
+          <span key={t.id} className={chipClass(t)} title={`${t.name} · ${t.inputPreview}`}>
+            {t.name}
+          </span>
+        ))}
+        {data.tools.length > MAX_CHIPS && (
+          <span className="chips-more">+{data.tools.length - MAX_CHIPS}</span>
+        )}
+      </div>
+
       <div className="meta">
         <span><b>{data.toolCount}</b> tools</span>
-        {inflightCount > 0 && <span><b>{inflightCount}</b> in-flight</span>}
+        {inflight > 0 && <span className="inflight-meta"><b>{inflight}</b> in-flight</span>}
       </div>
+
       <Handle type="source" position={Position.Right} style={{ background: "transparent", border: "none" }} />
     </div>
   );
+}
+
+function StatePill({ state }: { state: AgentNodeData["state"] }) {
+  const label = state === "active" ? "live" : state === "done" ? "done" : "err";
+  return <span className={`state-pill state-${state}`}>{label}</span>;
 }

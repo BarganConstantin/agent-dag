@@ -14,7 +14,8 @@ export interface ToolCall {
 
 export interface AgentNodeData {
   id: string;                 // session_id or `${session}::${parent_tool_use_id}`
-  label: string;              // human label (e.g., "main", "Explore", "Bash")
+  sessionId: string;          // root session id (same as id for root agents)
+  label: string;              // human label (workspace basename, subagent_type, etc.)
   kind: "root" | "subagent";
   parentId?: string;
   state: AgentState;
@@ -22,6 +23,8 @@ export interface AgentNodeData {
   endedAt?: number;
   tools: ToolCall[];
   cwd?: string;
+  cwdBasename?: string;
+  firstPrompt?: string;
   toolCount: number;
 }
 
@@ -32,7 +35,7 @@ export interface HookEnvelope {
   payload: HookPayload;
 }
 
-/** Loose shape — different Claude Code hook events deliver different keys. */
+/** Loose shape - different Claude Code hook events deliver different keys. */
 export interface HookPayload {
   hook_event_name?: string;
   session_id?: string;
