@@ -965,13 +965,32 @@ button.btn.icon-btn {
 .tool-burst.cat-other { --cat-accent: #94a3b8; }
 
 /* Shell sub-bubble — slightly compressed and a touch dimmer so the eye
-   parses "primary → sub" instead of "two equal bubbles". */
+   parses "primary → sub" instead of "two equal bubbles". Spawn is delayed
+   ~220ms so the chain reads sequentially: Bash appears, then git/grep
+   slides out of it. The post-spawn flash/shake for status changes uses
+   sum delays so it lines up with the sub's spawn, not the primary's. */
 .tool-burst.sub {
   font-size: 10.5px;
   padding: 4px 10px 4px 8px;
   opacity: 0.94;
+  animation: bubble-spawn 460ms 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 .tool-burst.sub .tb-emoji { font-size: 12px; }
+.tool-burst.sub.status-done {
+  animation:
+    bubble-spawn 460ms 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both,
+    bubble-done-flash 520ms 680ms ease-out;
+}
+.tool-burst.sub.status-err {
+  animation:
+    bubble-spawn 460ms 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both,
+    bubble-err-shake 380ms 680ms ease-in-out;
+}
+/* Fade-out wins regardless — when the underlying tool fades, sub fades
+   with primary so they leave together. */
+.tool-burst.sub.fading {
+  animation: bubble-fade 600ms ease-in forwards;
+}
 
 /* Clickable bubble — pointer-events on, hover lift */
 .tool-burst.clickable {
