@@ -34,6 +34,51 @@ const nodeTypes = { agent: AgentNode };
 
 const EXIT_ANIM_MS = 600;
 const STALE_TOOL_MS = 90_000;
+const LAYOUT_STORAGE_KEY = "agent-dag.layout";
+const VIEWPORT_STORAGE_KEY = "agent-dag.viewport";
+
+function loadLayout(): Array<[string, { x: number; y: number }]> {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (!raw) return [];
+    const obj = JSON.parse(raw) as Record<string, { x: number; y: number }>;
+    return Object.entries(obj).filter(([, v]) => v && typeof v.x === "number" && typeof v.y === "number");
+  } catch { return []; }
+}
+
+function saveLayout(pinned: Map<string, { x: number; y: number }>): void {
+  if (typeof window === "undefined") return;
+  try {
+    const obj: Record<string, { x: number; y: number }> = {};
+    for (const [id, pos] of pinned) obj[id] = pos;
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(obj));
+  } catch { /* quota / private mode — ignore */ }
+}
+
+function loadViewport(): { x: number; y: number; zoom: number } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(VIEWPORT_STORAGE_KEY);
+    if (!raw) return null;
+    const vp = JSON.parse(raw);
+    if (typeof vp?.x !== "number" || typeof vp?.y !== "number" || typeof vp?.zoom !== "number") return null;
+    return vp;
+  } catch { return null; }
+}
+
+function saveViewport(vp: { x: number; y: number; zoom: number }): void {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(VIEWPORT_STORAGE_KEY, JSON.stringify(vp)); } catch {}
+}
+
+function clearStoredLayout(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(LAYOUT_STORAGE_KEY);
+    window.localStorage.removeItem(VIEWPORT_STORAGE_KEY);
+  } catch {}
+}
 
 function matchesQuery(a: AgentNodeData, q: string): boolean {
   if (!q) return true;
@@ -142,7 +187,12 @@ function Inner() {
   const [paused, setPaused] = useState(false);
   const queueRef = useRef<HookEnvelope[]>([]);
   const [now, setNow] = useState(Date.now());
-  const pinnedRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  // Restore pinned positions synchronously on first render so they're
+  // applied before snapshotToFlow runs autoLayout. Sessions outlast a
+  // browser refresh (their session_id is stable), so dragged positions
+  // come back where you left them.
+  const pinnedRef = useRef<Map<string, { x: number; y: number }>>(new Map(loadLayout()));
+  const restoredViewport = useState(() => loadViewport())[0];
   const [query, setQuery] = useState("");
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     if (typeof window === "undefined") return "dark";
@@ -154,6 +204,16 @@ function Inner() {
     document.documentElement.dataset.theme = theme;
     try { window.localStorage.setItem("agent-dag.theme", theme); } catch {}
   }, [theme]);
+
+  // Apply restored viewport once ReactFlow's instance is ready. We skip
+  // the initial fitView in that case (see <ReactFlow fitView={…}/> below).
+  useEffect(() => {
+    if (!restoredViewport) return;
+    const id = window.setTimeout(() => {
+      try { rf.setViewport(restoredViewport, { duration: 0 }); } catch {}
+    }, 60);
+    return () => window.clearTimeout(id);
+  }, [rf, restoredViewport]);
 
   // SSE subscription
   useEffect(() => {
@@ -197,6 +257,8 @@ function Inner() {
   const fitTimerRef = useRef<number | null>(null);
   const lastFitTimeRef = useRef(0);
   const lastLayoutSigForFitRef = useRef("");
+  // Debounce timer for persisting the viewport on pan/zoom.
+  const vpSaveTimerRef = useRef<number | null>(null);
 
   // Auto-recover from "drifted off-screen": every 1.5s check whether ANY
   // agent's bounding box intersects the visible viewport. If none have at
@@ -328,6 +390,7 @@ function Inner() {
     measuredRef.current.clear();
     positionsRef.current.clear();
     lastLayoutSigRef.current = "";
+    clearStoredLayout();
     setSelectedId(null);
     rerender();
   }, [rerender]);
@@ -336,6 +399,7 @@ function Inner() {
     pinnedRef.current.clear();
     positionsRef.current.clear();
     lastLayoutSigRef.current = "";
+    clearStoredLayout();
     rerender();
     // After dagre runs on the next render, fit-view so the user sees the
     // result. 80ms gives React + RF one paint to settle the new positions.
@@ -461,7 +525,7 @@ function Inner() {
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
-          fitView
+          fitView={!restoredViewport}
           fitViewOptions={{ padding: 0.25, duration: 400 }}
           minZoom={0.2}
           maxZoom={1.6}
@@ -471,7 +535,13 @@ function Inner() {
           selectionOnDrag={false}
           onNodeClick={(_, n) => setSelectedId(n.id)}
           onPaneClick={() => setSelectedId(null)}
-          onMove={markInteract}
+          onMove={(_, vp) => {
+            markInteract();
+            // Debounce viewport persistence — pan/zoom fires many times
+            // per gesture, but we only need the final state.
+            if (vpSaveTimerRef.current) window.clearTimeout(vpSaveTimerRef.current);
+            vpSaveTimerRef.current = window.setTimeout(() => saveViewport(vp), 250);
+          }}
           onNodeDragStart={(_, n) => {
             markInteract();
             pinnedRef.current.set(n.id, { x: n.position.x, y: n.position.y });
@@ -487,6 +557,7 @@ function Inner() {
             markInteract();
             pinnedRef.current.set(n.id, { x: n.position.x, y: n.position.y });
             positionsRef.current.set(n.id, { x: n.position.x, y: n.position.y });
+            saveLayout(pinnedRef.current);
           }}
         >
           <Background gap={28} size={1} color={cssVar("--grid-line")} />
