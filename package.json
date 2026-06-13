@@ -41,6 +41,14 @@
   ],
   "author": "Bargan Constantin",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BarganConstantin/agent-dag.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BarganConstantin/agent-dag/issues"
+  },
+  "homepage": "https://github.com/BarganConstantin/agent-dag#readme",
   "dependencies": {
     "open": "^10.1.0"
   },
