@@ -92,6 +92,80 @@ function maybeResolveModel(payload) {
     .finally(() => pendingTranscriptReads.delete(sid));
 }
 
+// ─── Usage enrichment ────────────────────────────────────────────────────
+// Same story as the model: token counts (input/output/cache) are missing
+// from every CC hook payload but present on every assistant message in
+// the transcript JSONL as a `"usage":{…}` block. We sum them across the
+// whole transcript and ship a synthetic UsageObserved event so the
+// session's root agent gets accurate cumulative usage (and therefore the
+// cost columns actually have something to multiply by).
+const lastUsageReadAt = new Map();      // sid -> ms timestamp
+const pendingUsageReads = new Set();    // sid currently being read
+const USAGE_READ_THROTTLE_MS = 2500;
+
+async function readUsageFromTranscript(path) {
+  try {
+    const s = await stat(path);
+    if (s.size === 0) return null;
+    // Transcripts can grow large (thinking blocks, tool inputs) — read the
+    // whole file. Each entry has its own usage object and we sum every
+    // occurrence, so missing earlier bytes would undercount. Files are
+    // usually < 1MB; tens-of-MB sessions cost a few ms to scan.
+    const fh = await open(path, "r");
+    let buf;
+    try {
+      buf = Buffer.alloc(s.size);
+      await fh.read(buf, 0, s.size, 0);
+    } finally {
+      await fh.close();
+    }
+    const text = buf.toString("utf8");
+    const totals = {
+      input_tokens: 0, output_tokens: 0,
+      cache_read_input_tokens: 0, cache_creation_input_tokens: 0,
+    };
+    // Match each `"usage":{...}` block and sum the four numeric fields.
+    // Regex is good enough — these blocks are flat single-level JSON.
+    const re = /"usage"\s*:\s*\{([^}]+)\}/g;
+    const grab = (blob, key) => {
+      const km = blob.match(new RegExp(`"${key}"\\s*:\\s*(\\d+)`));
+      return km ? Number(km[1]) : 0;
+    };
+    for (const m of text.matchAll(re)) {
+      const blob = m[1];
+      totals.input_tokens += grab(blob, "input_tokens");
+      totals.output_tokens += grab(blob, "output_tokens");
+      totals.cache_read_input_tokens += grab(blob, "cache_read_input_tokens");
+      totals.cache_creation_input_tokens += grab(blob, "cache_creation_input_tokens");
+    }
+    if (totals.input_tokens === 0 && totals.output_tokens === 0
+        && totals.cache_read_input_tokens === 0 && totals.cache_creation_input_tokens === 0) return null;
+    return totals;
+  } catch {
+    return null;
+  }
+}
+
+function maybeResolveUsage(payload) {
+  if (!payload || typeof payload !== "object") return;
+  const sid = payload.session_id;
+  const tp = payload.transcript_path;
+  if (!sid || !tp) return;
+  if (pendingUsageReads.has(sid)) return;
+  const now = Date.now();
+  const last = lastUsageReadAt.get(sid) ?? 0;
+  if (now - last < USAGE_READ_THROTTLE_MS) return;
+  lastUsageReadAt.set(sid, now);
+  pendingUsageReads.add(sid);
+  readUsageFromTranscript(tp)
+    .then(usage => {
+      if (!usage) return;
+      pushEvent({ hook_event_name: "UsageObserved", session_id: sid, usage }, "internal");
+    })
+    .catch(() => {})
+    .finally(() => pendingUsageReads.delete(sid));
+}
+
 function pushEvent(raw, source, opts = {}) {
   // Synchronous enrichment: if we already know this session's model, stamp
   // it on the payload so the client's recursive scanner picks it up.
@@ -120,10 +194,14 @@ function pushEvent(raw, source, opts = {}) {
     appendFile(persistPath, JSON.stringify(evt) + "\n", "utf8").catch(() => {});
   }
 
-  // Kick off async transcript scan for unknown sessions. The result lands
-  // as a synthetic ModelObserved event a few ms later that backfills any
-  // agents already on the canvas.
-  if (source === "hook" && !opts.replay) maybeResolveModel(raw);
+  // Kick off async transcript scans. Model arrives as a one-shot
+  // ModelObserved; usage is re-read periodically (throttled to 2.5s per
+  // session) so the cost columns track running totals as the session
+  // progresses. Both result in synthetic events.
+  if (source === "hook" && !opts.replay) {
+    maybeResolveModel(raw);
+    maybeResolveUsage(raw);
+  }
 
   return evt;
 }

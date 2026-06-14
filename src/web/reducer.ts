@@ -318,6 +318,25 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
     return state;
   }
 
+  // UsageObserved carries cumulative session usage from the transcript.
+  // Overwrite (not add) the session root's usage with the totals — the
+  // server re-reads on every event, so this is always the running total.
+  // Subagents stay at zero; the SessionList / SessionSummary roll up at
+  // the session level so the user sees correct numbers regardless.
+  if (name === "UsageObserved") {
+    const u = (p.usage ?? null) as Record<string, unknown> | null;
+    if (u) {
+      const root = state.agents.get(sessionId);
+      if (root) {
+        root.usage.inputTokens = Number(u.input_tokens ?? 0);
+        root.usage.outputTokens = Number(u.output_tokens ?? 0);
+        root.usage.cacheReadTokens = Number(u.cache_read_input_tokens ?? 0);
+        root.usage.cacheCreateTokens = Number(u.cache_creation_input_tokens ?? 0);
+      }
+    }
+    return state;
+  }
+
   const owner = resolveOwner(state, p, now);
 
   // Snapshot model whenever it shows up in the payload — we want the most
