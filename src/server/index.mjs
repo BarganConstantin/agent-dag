@@ -33,6 +33,38 @@ const sseClients = new Set();       // res handles
 
 let persistPath = null;             // absolute path to events.jsonl, or null
 
+// ─── Persistence rotation ─────────────────────────────────────────────────
+// 24/7 dev servers used to grow events.jsonl unbounded — saw it hit GBs
+// across weeks. We rotate when the file passes ROTATE_AT_BYTES, archiving
+// the previous file to .1 and starting fresh. Last-event-id replay still
+// covers the in-memory ring buffer of MAX_BUFFER events.
+const ROTATE_AT_BYTES = 50 * 1024 * 1024;
+let lastRotateCheckAt = 0;
+let rotateInProgress = false;
+async function maybeRotatePersistFile() {
+  if (!persistPath) return;
+  const now = Date.now();
+  // Throttle disk-stat checks to once per 30s.
+  if (now - lastRotateCheckAt < 30_000) return;
+  lastRotateCheckAt = now;
+  if (rotateInProgress) return;
+  rotateInProgress = true;
+  try {
+    const s = await stat(persistPath).catch(() => null);
+    if (!s || s.size < ROTATE_AT_BYTES) return;
+    // Roll events.jsonl → events.jsonl.1 (replacing any previous .1).
+    const oldPath = persistPath + ".1";
+    try { await unlink(oldPath); } catch {}
+    const { rename } = await import("node:fs/promises");
+    await rename(persistPath, oldPath);
+    console.log(`agent-dag: rotated ${persistPath} (${(s.size / 1024 / 1024).toFixed(0)}MB → ${oldPath})`);
+  } catch (err) {
+    console.error("agent-dag: persist rotation failed:", err && err.message ? err.message : err);
+  } finally {
+    rotateInProgress = false;
+  }
+}
+
 // ─── Model enrichment ────────────────────────────────────────────────────
 // CC's hook payloads never carry the `model` field — but every hook
 // references a `transcript_path` JSONL that contains lines like
@@ -192,6 +224,8 @@ function pushEvent(raw, source, opts = {}) {
   if (persistPath && !opts.replay) {
     // Fire-and-forget append. JSONL = newline-delimited JSON.
     appendFile(persistPath, JSON.stringify(evt) + "\n", "utf8").catch(() => {});
+    // Cheap throttled check (every 30s) — only rotates if file > 50MB.
+    maybeRotatePersistFile();
   }
 
   // Kick off async transcript scans. Model arrives as a one-shot

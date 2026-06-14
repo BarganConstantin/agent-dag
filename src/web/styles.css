@@ -256,6 +256,29 @@ button:focus-visible, .search input:focus-visible { outline-offset: 1px; }
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
+
+/* MCP server legend — small row of hue dots in the topbar showing
+   which servers have been called. Hover for per-server tool counts. */
+.topbar .status .mcp-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: default;
+}
+.topbar .status .mcp-legend .mcp-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid rgba(0,0,0,0.35);
+  box-shadow: 0 0 4px rgba(0,0,0,0.25);
+}
+.topbar .status .mcp-legend .mcp-more {
+  font-size: 9.5px;
+  color: var(--muted);
+  margin-left: 1px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 @keyframes pulse {
   0%, 100% { opacity: 1; } 50% { opacity: 0.35; }
 }
@@ -1606,9 +1629,13 @@ button.btn.icon-btn {
   border: 1px solid var(--line);
   border-radius: 10px;
 }
-.detail-hero .hero-recap-btn {
-  align-self: flex-start;
+.detail-hero .hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-top: 4px;
+}
+.detail-hero .hero-action-btn {
   padding: 5px 12px;
   font-size: 11px;
 }

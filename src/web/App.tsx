@@ -126,6 +126,64 @@ function clearStoredLayout(): void {
   try { window.localStorage.removeItem(VIEWPORT_STORAGE_KEY); } catch {}
 }
 
+/** Build a portable JSON snapshot of a single session (root + every
+ *  subagent) and trigger a browser download. Useful for offline analysis,
+ *  bug reports, or just keeping a record of a noteworthy run. */
+function exportSessionJson(state: GraphState, sessionId: string): void {
+  const root = state.agents.get(sessionId);
+  if (!root) return;
+  const agents: AgentNodeData[] = [];
+  for (const a of state.agents.values()) {
+    if (a.sessionId === sessionId) agents.push(a);
+  }
+  const payload = {
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    sessionId,
+    label: root.label,
+    cwd: root.cwd,
+    startedAt: root.startedAt,
+    endedAt: root.endedAt,
+    model: root.model,
+    agents: agents.map(a => ({
+      id: a.id,
+      kind: a.kind,
+      label: a.label,
+      parentId: a.parentId,
+      state: a.state,
+      startedAt: a.startedAt,
+      endedAt: a.endedAt,
+      model: a.model,
+      cwd: a.cwd,
+      usage: a.usage,
+      prompts: a.prompts,
+      // Strip the heavy `input`/`response` fields by default to keep the
+      // file portable. Tool name + timing + ok flag are usually enough.
+      tools: a.tools.map(t => ({
+        id: t.id,
+        name: t.name,
+        inputPreview: t.inputPreview,
+        startedAt: t.startedAt,
+        endedAt: t.endedAt,
+        ok: t.ok,
+        errorPreview: t.errorPreview,
+        usage: t.usage,
+      })),
+    })),
+  };
+  const json = JSON.stringify(payload, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const safeLabel = (root.label || "session").replace(/[^a-z0-9._-]/gi, "_");
+  a.href = url;
+  a.download = `agent-dag-${safeLabel}-${sessionId.slice(0, 8)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 // Tool categories used both by the detail-panel strip and the canvas
 // filter chips. Same buckets ToolBursts uses internally (kept in sync
 // manually — small enough that a shared module isn't worth it).
@@ -643,6 +701,32 @@ function Inner() {
     return (Object.keys(DETAIL_CAT_EMOJI) as DetailCategory[]).filter(c => set.has(c));
   }, [stateRef.current, stateRef.current.lastSeq]);
 
+  // MCP server legend — unique servers observed across all tool calls,
+  // each with a count. ToolBursts gives unknown servers a hash-based hue
+  // accent; we mirror that here so the legend dot color matches the
+  // burst's stripe color for the same server.
+  const mcpServers = useMemo<Array<{ server: string; count: number; hue: number }>>(() => {
+    const counts = new Map<string, number>();
+    for (const a of stateRef.current.agents.values()) {
+      for (const t of a.tools) {
+        if (!t.name.startsWith("mcp__")) continue;
+        const rest = t.name.slice(5);
+        const idx = rest.indexOf("__");
+        const server = idx > 0 ? rest.slice(0, idx) : rest;
+        counts.set(server, (counts.get(server) ?? 0) + 1);
+      }
+    }
+    const out: Array<{ server: string; count: number; hue: number }> = [];
+    for (const [server, count] of counts) {
+      // Same djb2-ish hash ToolBursts uses for unknown server hue.
+      let h = 5381;
+      for (let i = 0; i < server.length; i++) h = ((h << 5) + h) ^ server.charCodeAt(i);
+      out.push({ server, count, hue: Math.abs(h) % 360 });
+    }
+    out.sort((a, b) => b.count - a.count);
+    return out;
+  }, [stateRef.current, stateRef.current.lastSeq]);
+
   const toggleCat = useCallback((c: DetailCategory) => {
     setHiddenCats(prev => {
       const next = new Set(prev);
@@ -689,6 +773,37 @@ function Inner() {
     lastFitTimeRef.current = Date.now();
   }, [rf]);
 
+  /** Step through visible agents in render order. `direction` is +1 for
+   *  next (j) or -1 for previous (k). Selecting moves the canvas to keep
+   *  the chosen agent in view. */
+  const stepAgent = useCallback((direction: 1 | -1) => {
+    if (nodes.length === 0) return;
+    // Use the same order ReactFlow's nodes prop has — left-to-right by
+    // worldspace position then top-to-bottom. That matches what the eye
+    // expects when pressing j.
+    const ordered = nodes
+      .slice()
+      .sort((a, b) => (a.position.y - b.position.y) || (a.position.x - b.position.x));
+    const currentIdx = primarySelectedId
+      ? ordered.findIndex(n => n.id === primarySelectedId)
+      : -1;
+    let next: number;
+    if (currentIdx === -1) {
+      next = direction === 1 ? 0 : ordered.length - 1;
+    } else {
+      next = (currentIdx + direction + ordered.length) % ordered.length;
+    }
+    const target = ordered[next];
+    if (!target) return;
+    selectAgent(target.id, false);
+    // Fit-view to the chosen node so it lands on screen even if the user
+    // had panned away.
+    window.setTimeout(() => {
+      try { rf.fitView({ padding: 0.35, duration: 350, nodes: [target] }); } catch {}
+      lastFitTimeRef.current = Date.now();
+    }, 30);
+  }, [nodes, primarySelectedId, selectAgent, rf]);
+
   // keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -706,11 +821,13 @@ function Inner() {
       if (e.key === "f" || e.key === "F") handleFit();
       if (e.key === "l" || e.key === "L") setSessionListOpen(o => !o);
       if (e.key === "h" || e.key === "H") setTimelineOpen(o => !o);
+      if (e.key === "j" || e.key === "J") stepAgent(1);
+      if (e.key === "k" || e.key === "K") stepAgent(-1);
       if (e.key === "t" || e.key === "T") setTheme(t => (t === "dark" ? "light" : "dark"));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [handleClear, handleRelayout, handleFit, clearSelection]);
+  }, [handleClear, handleRelayout, handleFit, clearSelection, stepAgent]);
 
   const agentCount = stateRef.current.agents.size;
   const sessionCount = new Set(Array.from(stateRef.current.agents.values()).map(a => a.sessionId)).size;
@@ -798,6 +915,22 @@ function Inner() {
             {totalTokens.sum > 0 && (
               <span className="stat" title={`in:${totalTokens.inT.toLocaleString()}  out:${totalTokens.outT.toLocaleString()}  cache-r:${totalTokens.cacheR.toLocaleString()}  cache-c:${totalTokens.cacheC.toLocaleString()}`}>
                 <span className="count">{fmtTokens(totalTokens.sum)}</span><span className="lbl">tokens</span>
+              </span>
+            )}
+            {mcpServers.length > 0 && (
+              <span
+                className="stat mcp-legend"
+                title={`MCP servers seen this session:\n${mcpServers.map(s => `  ${s.server}: ${s.count} call${s.count === 1 ? "" : "s"}`).join("\n")}`}
+              >
+                {mcpServers.slice(0, 6).map(s => (
+                  <span
+                    key={s.server}
+                    className="mcp-dot"
+                    style={{ background: `hsl(${s.hue} 65% 65%)` }}
+                  />
+                ))}
+                {mcpServers.length > 6 && <span className="mcp-more">+{mcpServers.length - 6}</span>}
+                <span className="lbl">mcp</span>
               </span>
             )}
             {totalTokens.cost.total > 0 && (() => {
@@ -989,6 +1122,7 @@ function Inner() {
                 }
                 setSummaryFor(sid);
               }}
+              onExportSession={(sid) => exportSessionJson(stateRef.current, sid)}
             />
           : <EmptyDetail count={agentCount} />}
       </aside>
@@ -1067,6 +1201,8 @@ function EmptyDetail({ count }: { count: number }) {
         <div className="sc"><kbd>drag</kbd><span>move a node</span></div>
         <div className="sc"><kbd>/</kbd><span>focus search</span></div>
         <div className="sc"><kbd>space</kbd><span>pause / resume</span></div>
+        <div className="sc"><kbd>J</kbd><span>next agent</span></div>
+        <div className="sc"><kbd>K</kbd><span>previous agent</span></div>
         <div className="sc"><kbd>R</kbd><span>re-arrange</span></div>
         <div className="sc"><kbd>F</kbd><span>fit view</span></div>
         <div className="sc"><kbd>L</kbd><span>session list</span></div>
@@ -1084,11 +1220,13 @@ function Detail({
   now,
   onOpenTool,
   onShowSummary,
+  onExportSession,
 }: {
   agent: AgentNodeData;
   now: number;
   onOpenTool: (toolId: string) => void;
   onShowSummary?: (sessionId: string) => void;
+  onExportSession?: (sessionId: string) => void;
 }) {
   const elapsedMs = (agent.endedAt ?? now) - agent.startedAt;
   const elapsedSec = Math.max(0, Math.floor(elapsedMs / 1000));
@@ -1142,14 +1280,24 @@ function Detail({
             <CostBar cost={cost} />
           </div>
         )}
-        {agent.kind === "root" && agent.state === "done" && onShowSummary && (
-          <button
-            type="button"
-            className="btn hero-recap-btn"
-            onClick={() => onShowSummary(agent.sessionId)}
-            title="Reopen the end-of-session recap modal"
-          >Show recap</button>
-        )}
+        <div className="hero-actions">
+          {agent.kind === "root" && agent.state === "done" && onShowSummary && (
+            <button
+              type="button"
+              className="btn hero-action-btn"
+              onClick={() => onShowSummary(agent.sessionId)}
+              title="Reopen the end-of-session recap modal"
+            >Show recap</button>
+          )}
+          {onExportSession && (
+            <button
+              type="button"
+              className="btn hero-action-btn"
+              onClick={() => onExportSession(agent.sessionId)}
+              title="Download this session as JSON"
+            >Export JSON</button>
+          )}
+        </div>
       </header>
 
       {agent.tools.length > 0 && (
