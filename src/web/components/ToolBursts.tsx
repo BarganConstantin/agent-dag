@@ -13,9 +13,19 @@ import type { AgentNodeData, ToolCall } from "../types";
 
 const FADE_MS = 600;
 const MAX_PER_AGENT = 4;
-const BUBBLE_VERT_GAP = 44;
+const BUBBLE_VERT_GAP = 36;
 const BUBBLE_HALF_H = 16;
-const BUBBLE_OFFSET_X = 52;
+const BUBBLE_OFFSET_X = 60;
+/** Vertical inset from the agent's top — first bubble sits this far below
+ *  the agent's top edge, then they stack downward. Anchoring to the top
+ *  (rather than the middle) keeps the trail from overflowing above the
+ *  card or running over the card's own header/title area. */
+const BUBBLE_TOP_INSET = 6;
+/** Floor for the agent's measured width — the .agent-node CSS has
+ *  min-width:220px, so even an unmeasured card is at least this wide. Using
+ *  it stops bubbles from being computed flush with a wrong-tiny width and
+ *  then visually overlapping the card once measurement settles. */
+const AGENT_W_MIN = 220;
 /** Approximate width of a bubble — used to position chained sub-bubbles
  *  before we know their measured width. ~96 fits "📖 Read" through
  *  "🎬 Workflow"; anything longer wraps naturally. */
@@ -514,17 +524,18 @@ function collectBursts(
     if (visible.length === 0) continue;
     const agentExitAt = a.exitAt ?? null;
     const size = measured.get(a.id);
-    const aW = size?.width ?? 240;
+    // Floor to the CSS min-width so we never under-estimate the card's
+    // right edge and end up positioning a bubble inside it.
+    const aW = Math.max(size?.width ?? AGENT_W_MIN, AGENT_W_MIN);
     const aH = size?.height ?? 130;
     const aX = pos.x;
     const aY = pos.y;
     const anchorX = aX + aW;
     const anchorY = aY + aH / 2;
-    const lastIdx = visible.length - 1;
     visible.forEach((t, idx) => {
-      const offsetY = (idx - lastIdx / 2) * BUBBLE_VERT_GAP;
+      const offsetY = idx * BUBBLE_VERT_GAP;
       const worldX = aX + aW + BUBBLE_OFFSET_X;
-      const worldY = aY + aH / 2 + offsetY - BUBBLE_HALF_H;
+      const worldY = aY + BUBBLE_TOP_INSET + offsetY;
       const fade = fadeAt(t, now, agentExitAt);
       // The delta is from the bubble's anchor point (its visual left-centre)
       // back to the agent's right edge. The bubble starts there during spawn
