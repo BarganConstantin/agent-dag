@@ -2,6 +2,26 @@ import React from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 import { sessionHue } from "../reducer";
 import { costForUsage, fmtCost, fmtCostRate, ratesForModel } from "../pricing";
+
+/** Multi-line breakdown for the cost chip tooltip — shows the actual
+ *  multiplication so the user can verify pricing is sane.
+ *  e.g. "input  725 × $5/M     = $0.00"  */
+function costBreakdownTooltip(usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreateTokens: number }, modelId: string | undefined): string {
+  const rates = ratesForModel(modelId);
+  if (!rates) return "no rates for this model";
+  const fmtN = (n: number) => n.toLocaleString();
+  const fmtR = (r: number) => `$${r}/MTok`;
+  const c = costForUsage(usage, modelId);
+  return [
+    `model: ${modelId}`,
+    `input    ${fmtN(usage.inputTokens).padStart(14)}  × ${fmtR(rates.input).padEnd(11)} = ${fmtCost(c.input)}`,
+    `output   ${fmtN(usage.outputTokens).padStart(14)}  × ${fmtR(rates.output).padEnd(11)} = ${fmtCost(c.output)}`,
+    `cache r  ${fmtN(usage.cacheReadTokens).padStart(14)}  × ${fmtR(rates.cacheRead).padEnd(11)} = ${fmtCost(c.cacheRead)}`,
+    `cache w  ${fmtN(usage.cacheCreateTokens).padStart(14)}  × ${fmtR(rates.cacheWrite).padEnd(11)} = ${fmtCost(c.cacheWrite)}`,
+    `─────────────────────────────────────────`,
+    `total                                 = ${fmtCost(c.total)}`,
+  ].join("\n");
+}
 import type { AgentNodeData, ToolCall } from "../types";
 
 function elapsed(start: number, end: number | undefined, now: number): string {
@@ -69,7 +89,7 @@ export default function AgentNode({ data, selected }: NodeProps<AgentNodeData & 
           if (c.total <= 0) return null;
           const elapsedSec = Math.max(0, ((data.endedAt ?? now) - data.startedAt) / 1000);
           const rate = data.state === "active" ? fmtCostRate(c.total, elapsedSec) : null;
-          const tt = `input ${fmtCost(c.input)} + output ${fmtCost(c.output)} + cache r ${fmtCost(c.cacheRead)} + cache w ${fmtCost(c.cacheWrite)}${rate ? `\nburn: ${rate}` : ""}`;
+          const tt = costBreakdownTooltip(data.usage, data.model) + (rate ? `\nburn: ${rate}` : "");
           return (
             <span className="cost-meta" title={tt}>
               <b>{fmtCost(c.total)}</b>

@@ -217,6 +217,14 @@ function snapshotToFlow(
   const visibleIds = new Set<string>();
   for (const a of state.agents.values()) {
     if (a.exitAt != null && now - a.exitAt > EXIT_ANIM_MS) continue;
+    // Ghost-session filter: a done root with 0 tools that lived less than
+    // 3 seconds is almost certainly a hook test or aborted invocation —
+    // CC fires SessionStart + Stop in rapid succession without ever
+    // running a tool. Hiding them keeps the canvas focused on real work.
+    if (
+      a.kind === "root" && a.state === "done" && a.tools.length === 0 &&
+      a.endedAt != null && (a.endedAt - a.startedAt) < 3000
+    ) continue;
     visibleIds.add(a.id);
   }
 
@@ -426,6 +434,18 @@ function Inner() {
       // Prune long-finished agents so memory doesn't grow over multi-day
       // sessions. Keeps most-recent AGENT_CAP — past 5 minutes since done.
       if (pruneOldAgents(stateRef.current, t, AGENT_CAP, AGENT_GRACE_MS)) changed = true;
+      // Sample total cost every ~1s for the timeline chart. Cheaper than
+      // ticking every 250ms and detailed enough for a smooth area.
+      if (t - lastCostSampleAtRef.current >= 1000) {
+        lastCostSampleAtRef.current = t;
+        let total = 0;
+        for (const a of stateRef.current.agents.values()) {
+          total += costForUsage(a.usage, a.model).total;
+        }
+        const buf = costSamplesRef.current;
+        buf.push({ t, cost: total });
+        if (buf.length > 240) buf.shift();
+      }
       if (changed) rerender();
     }, 250);
     return () => clearInterval(id);
@@ -437,6 +457,11 @@ function Inner() {
   const lastLayoutSigForFitRef = useRef("");
   // Debounce timer for persisting the viewport on pan/zoom.
   const vpSaveTimerRef = useRef<number | null>(null);
+  /** Rolling buffer of {t, total} cost samples, snapshotted ~1/sec. Powers
+   *  the timeline's "$" mode (smooth area chart of cumulative spend over
+   *  the last minute or so). Capped at 240 samples (~4 minutes). */
+  const costSamplesRef = useRef<Array<{ t: number; cost: number }>>([]);
+  const lastCostSampleAtRef = useRef(0);
 
   // Auto-recover from "drifted off-screen": every 1.5s check whether ANY
   // agent's bounding box intersects the visible viewport. If none have at
@@ -914,6 +939,7 @@ function Inner() {
           <TimelineStrip
             agents={stateRef.current.agents}
             now={now}
+            costSamples={costSamplesRef.current}
             onSelect={(id) => selectAgent(id, false)}
             onOpenTool={setOpenedToolId}
             onClose={() => setTimelineOpen(false)}

@@ -1264,14 +1264,49 @@ button.btn.icon-btn {
 .timeline-strip .ts-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 6px;
+}
+/* Mode toggle — segmented control between tools / $ */
+.timeline-strip .ts-mode-toggle {
+  display: inline-flex;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px;
+  gap: 2px;
+}
+.timeline-strip .ts-mode {
+  font: inherit;
+  font-size: 10.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 2px 9px;
+  border: none;
+  border-radius: 999px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: background 120ms, color 120ms;
+}
+.timeline-strip .ts-mode:hover { color: var(--text); }
+.timeline-strip .ts-mode.on {
+  background: var(--accent-dim);
+  color: var(--text);
+}
+.timeline-strip .ts-mode:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .timeline-strip .ts-title {
   font-size: 10.5px;
   letter-spacing: 0.10em;
   text-transform: uppercase;
   color: var(--muted);
+  font-weight: 600;
+}
+.timeline-strip .ts-delta {
+  color: var(--ok);
   font-weight: 600;
 }
 .timeline-strip .ts-total {
@@ -1370,6 +1405,26 @@ button.btn.icon-btn {
 .cat-plan  { --cat-color: #c4b5fd; }
 .cat-mcp   { --cat-color: #5eead4; }
 .cat-other { --cat-color: #94a3b8; }
+
+/* Cost-chart SVG — fills the ts-track when in "$" mode */
+.timeline-strip .ts-chart {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.timeline-strip .ts-chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.04em;
+}
 
 /* ---------------- session list sidebar ---------------- */
 
