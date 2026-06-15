@@ -198,6 +198,105 @@ function maybeResolveUsage(payload) {
     .finally(() => pendingUsageReads.delete(sid));
 }
 
+// ─── Context enrichment ──────────────────────────────────────────────────
+// Approximation of `/context` since CC doesn't expose its breakdown via
+// hooks. We scan the transcript JSONL for message counts (user / assistant
+// / tool_use / tool_result / system-reminders) and walk up from cwd for
+// any CLAUDE.md files in scope. Token totals come from UsageObserved; this
+// scan is purely structural ("what does the context contain").
+const lastContextReadAt = new Map();
+const pendingContextReads = new Set();
+const CONTEXT_READ_THROTTLE_MS = 4000;
+
+async function readContextFromTranscript(path) {
+  try {
+    const s = await stat(path);
+    if (s.size === 0) return null;
+    const fh = await open(path, "r");
+    let buf;
+    try { buf = Buffer.alloc(s.size); await fh.read(buf, 0, s.size, 0); }
+    finally { await fh.close(); }
+    const text = buf.toString("utf8");
+    const breakdown = {
+      msgsUser: 0,
+      msgsAssistant: 0,
+      toolUses: 0,
+      toolResults: 0,
+      systemReminders: 0,
+    };
+    // Cheap regex counters — transcript is line-delimited JSON, but we
+    // don't need structure to count occurrences of these specific keys.
+    breakdown.msgsUser       = (text.match(/"type"\s*:\s*"user"/g) ?? []).length;
+    breakdown.msgsAssistant  = (text.match(/"type"\s*:\s*"assistant"/g) ?? []).length;
+    breakdown.toolUses       = (text.match(/"type"\s*:\s*"tool_use"/g) ?? []).length;
+    breakdown.toolResults    = (text.match(/"type"\s*:\s*"tool_result"/g) ?? []).length;
+    breakdown.systemReminders = (text.match(/<system-reminder>/g) ?? []).length;
+    return breakdown;
+  } catch { return null; }
+}
+
+async function scanClaudeMdFiles(cwd) {
+  if (!cwd || typeof cwd !== "string") return [];
+  const found = [];
+  const seen = new Set();
+  const home = homedir();
+  // Walk up from cwd to home (or root). At each dir, check for CLAUDE.md
+  // and .claude/CLAUDE.md.
+  let dir = resolve(cwd);
+  for (let depth = 0; depth < 12; depth++) {
+    for (const rel of ["CLAUDE.md", join(".claude", "CLAUDE.md")]) {
+      const p = join(dir, rel);
+      if (seen.has(p)) continue;
+      seen.add(p);
+      try {
+        const s = await stat(p);
+        if (s.isFile()) found.push({ path: p, bytes: s.size });
+      } catch {}
+    }
+    const parent = pdirname(dir);
+    if (parent === dir) break;
+    if (dir === home) break;
+    dir = parent;
+  }
+  // Also check ~/.claude/CLAUDE.md (user-global memory).
+  try {
+    const p = join(home, ".claude", "CLAUDE.md");
+    if (!seen.has(p)) {
+      const s = await stat(p);
+      if (s.isFile()) found.push({ path: p, bytes: s.size });
+    }
+  } catch {}
+  return found;
+}
+
+function maybeResolveContext(payload) {
+  if (!payload || typeof payload !== "object") return;
+  const sid = payload.session_id;
+  const tp = payload.transcript_path;
+  const cwd = payload.cwd;
+  if (!sid || !tp) return;
+  if (pendingContextReads.has(sid)) return;
+  const now = Date.now();
+  const last = lastContextReadAt.get(sid) ?? 0;
+  if (now - last < CONTEXT_READ_THROTTLE_MS) return;
+  lastContextReadAt.set(sid, now);
+  pendingContextReads.add(sid);
+  Promise.all([readContextFromTranscript(tp), scanClaudeMdFiles(cwd)])
+    .then(([breakdown, claudeMdFiles]) => {
+      if (!breakdown && (!claudeMdFiles || claudeMdFiles.length === 0)) return;
+      pushEvent({
+        hook_event_name: "ContextObserved",
+        session_id: sid,
+        context: {
+          ...(breakdown ?? {}),
+          claudeMdFiles: claudeMdFiles ?? [],
+        },
+      }, "internal");
+    })
+    .catch(() => {})
+    .finally(() => pendingContextReads.delete(sid));
+}
+
 function pushEvent(raw, source, opts = {}) {
   // Synchronous enrichment: if we already know this session's model, stamp
   // it on the payload so the client's recursive scanner picks it up.
@@ -235,6 +334,7 @@ function pushEvent(raw, source, opts = {}) {
   if (source === "hook" && !opts.replay) {
     maybeResolveModel(raw);
     maybeResolveUsage(raw);
+    maybeResolveContext(raw);
   }
 
   return evt;

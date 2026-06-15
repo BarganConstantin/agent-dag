@@ -29,6 +29,15 @@ export interface PromptEntry {
   text: string;
 }
 
+export interface ContextBreakdown {
+  msgsUser: number;
+  msgsAssistant: number;
+  toolUses: number;
+  toolResults: number;
+  systemReminders: number;
+  claudeMdFiles: Array<{ path: string; bytes: number }>;
+}
+
 export interface AgentNodeData {
   id: string;                 // session_id or `${session}::${parent_tool_use_id}`
   sessionId: string;          // root session id (same as id for root agents)
@@ -59,6 +68,11 @@ export interface AgentNodeData {
    *  turn has started and this subagent already finished). UI plays an exit
    *  animation, then drops it from the canvas. */
   exitAt?: number;
+  /** Server-derived structural breakdown of what's in the context window.
+   *  Approximation: server reads the transcript JSONL + scans cwd for
+   *  CLAUDE.md and emits a synthetic ContextObserved event. Only the root
+   *  agent carries this — subagent context isn't separately observable. */
+  context?: ContextBreakdown;
 }
 
 export interface HookEnvelope {

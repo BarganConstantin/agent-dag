@@ -344,6 +344,26 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
   // server re-reads on every event, so this is always the running total.
   // Subagents stay at zero; the SessionList / SessionSummary roll up at
   // the session level so the user sees correct numbers regardless.
+  if (name === "ContextObserved") {
+    const ctx = (p.context ?? null) as Record<string, unknown> | null;
+    if (ctx) {
+      const root = state.agents.get(sessionId);
+      if (root) {
+        root.context = {
+          msgsUser: Number(ctx.msgsUser ?? 0),
+          msgsAssistant: Number(ctx.msgsAssistant ?? 0),
+          toolUses: Number(ctx.toolUses ?? 0),
+          toolResults: Number(ctx.toolResults ?? 0),
+          systemReminders: Number(ctx.systemReminders ?? 0),
+          claudeMdFiles: Array.isArray(ctx.claudeMdFiles)
+            ? (ctx.claudeMdFiles as Array<{ path: string; bytes: number }>)
+            : [],
+        };
+      }
+    }
+    return state;
+  }
+
   if (name === "UsageObserved") {
     const u = (p.usage ?? null) as Record<string, unknown> | null;
     if (u) {

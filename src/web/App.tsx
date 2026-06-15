@@ -16,6 +16,7 @@ import ToolModal from "./components/ToolModal";
 import SessionClusters from "./components/SessionClusters";
 import ToolBursts from "./components/ToolBursts";
 import SessionSummary from "./components/SessionSummary";
+import ContextModal from "./components/ContextModal";
 import SessionList from "./components/SessionList";
 import TimelineStrip from "./components/TimelineStrip";
 import { autoLayout } from "./layout";
@@ -291,8 +292,9 @@ function snapshotToFlow(
   selectedIds: Set<string>,
   lineage: Set<string> | null,
   visibleIds: Set<string>,
-): { nodes: Node<AgentNodeData & { now: number; dim?: boolean }>[]; edges: Edge[] } {
-  const nodes: Node<AgentNodeData & { now: number; dim?: boolean }>[] = [];
+  onOpenContext: (sessionId: string) => void,
+): { nodes: Node<AgentNodeData & { now: number; dim?: boolean; onOpenContext?: (sessionId: string) => void }>[]; edges: Edge[] } {
+  const nodes: Node<AgentNodeData & { now: number; dim?: boolean; onOpenContext?: (sessionId: string) => void }>[] = [];
   const edges: Edge[] = [];
   const matchSet = new Set<string>();
   if (query) {
@@ -314,7 +316,7 @@ function snapshotToFlow(
       id: a.id,
       type: "agent",
       position: { x: 0, y: 0 },
-      data: { ...a, now, dim },
+      data: { ...a, now, dim, onOpenContext },
       className: cls,
     });
     if (a.parentId && visibleIds.has(a.parentId)) {
@@ -430,6 +432,10 @@ function Inner() {
    *  or null when no modal is open. Triggered by Stop / SessionEnd hooks
    *  (gated against dismissedSummariesRef to avoid re-opening on refresh). */
   const [summaryFor, setSummaryFor] = useState<string | null>(null);
+  /** Session id whose context-breakdown modal is open, or null. Driven by
+   *  clicking the donut on the session's root node. */
+  const [contextFor, setContextFor] = useState<string | null>(null);
+  const openContext = useCallback((sid: string) => setContextFor(sid), []);
   const dismissedSummariesRef = useRef<Set<string>>(loadDismissedSummaries());
   /** Left sidebar (session list) visibility — persisted across refresh. */
   const [sessionListOpen, setSessionListOpen] = useState<boolean>(loadSessionListOpen);
@@ -705,9 +711,9 @@ function Inner() {
     () => snapshotToFlow(
       stateRef.current, now, pinnedRef.current, query,
       measuredRef.current, positionsRef.current, layoutSig, lastLayoutSigRef,
-      selectedIds, spotlightSet, visibleAgentIds,
+      selectedIds, spotlightSet, visibleAgentIds, openContext,
     ),
-    [stateRef.current, stateRef.current.lastSeq, now, query, layoutSig, selectedIds, spotlightSet, visibleAgentIds],
+    [stateRef.current, stateRef.current.lastSeq, now, query, layoutSig, selectedIds, spotlightSet, visibleAgentIds, openContext],
   );
 
   // Set of agent ids that match the current /-search query, or null when
@@ -1181,6 +1187,11 @@ function Inner() {
       </aside>
 
       {openedTool && <ToolModal tool={openedTool} onClose={() => setOpenedToolId(null)} />}
+      {contextFor && (() => {
+        const root = stateRef.current.agents.get(contextFor);
+        if (!root) return null;
+        return <ContextModal agent={root} onClose={() => setContextFor(null)} />;
+      })()}
       {summaryFor && (
         <SessionSummary
           state={stateRef.current}

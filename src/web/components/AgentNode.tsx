@@ -2,6 +2,7 @@ import React from "react";
 import { Handle, Position, type NodeProps } from "reactflow";
 import { sessionHue } from "../reducer";
 import { costForUsage, fmtCost, fmtCostRate, ratesForModel } from "../pricing";
+import { ContextDonut } from "./ContextModal";
 
 /** Multi-line breakdown for the cost chip tooltip — shows the actual
  *  multiplication so the user can verify pricing is sane.
@@ -34,7 +35,7 @@ function elapsed(start: number, end: number | undefined, now: number): string {
   return `${m}m ${String(rs).padStart(2, "0")}s`;
 }
 
-export default function AgentNode({ data, selected }: NodeProps<AgentNodeData & { now: number }>) {
+export default function AgentNode({ data, selected }: NodeProps<AgentNodeData & { now: number; onOpenContext?: (sessionId: string) => void }>) {
   const now = data.now ?? Date.now();
   const cls = [
     "agent-node",
@@ -46,6 +47,8 @@ export default function AgentNode({ data, selected }: NodeProps<AgentNodeData & 
   const inflight = data.tools.filter(t => !t.endedAt).length;
   const hue = sessionHue(data.sessionId);
   const accent = `hsl(${hue} 70% 60%)`;
+  const hasContextSignal = data.kind === "root"
+    && (data.usage.inputTokens + data.usage.cacheReadTokens + data.usage.cacheCreateTokens) > 0;
 
   return (
     <div className={cls} style={{ "--accent": accent } as React.CSSProperties}>
@@ -58,8 +61,16 @@ export default function AgentNode({ data, selected }: NodeProps<AgentNodeData & 
           <span className="label" title={data.cwd}>{data.label}</span>
           {data.synthetic && <span className="synth-tag" title="No SessionStart captured — synthesised">?</span>}
         </div>
-        <div className="time" title={`Started ${new Date(data.startedAt).toLocaleTimeString()}`}>
-          {elapsed(data.startedAt, data.endedAt, now)}
+        <div className="head-right">
+          {hasContextSignal && data.onOpenContext && (
+            <ContextDonut
+              usage={data.usage}
+              onClick={() => data.onOpenContext!(data.sessionId)}
+            />
+          )}
+          <div className="time" title={`Started ${new Date(data.startedAt).toLocaleTimeString()}`}>
+            {elapsed(data.startedAt, data.endedAt, now)}
+          </div>
         </div>
       </div>
 
