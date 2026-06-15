@@ -355,11 +355,18 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
       break;
     }
     case "UserPromptSubmit": {
-      // New turn for this session. Any subagent that's already done belongs
-      // to the previous turn — mark for exit so the canvas stays focused on
-      // what's relevant to the new request.
+      // New turn for this session. Any subagent that's already done AND has
+      // ended at least EXIT_GRACE_MS ago belongs to the previous turn — mark
+      // for exit so the canvas stays focused on what's relevant to the new
+      // request. Recently-finished subagents are spared so a fast follow-up
+      // prompt while bursts are still settling doesn't yank them.
+      const EXIT_GRACE_MS = 1500;
       for (const other of state.agents.values()) {
-        if (other.sessionId === sessionId && other.kind === "subagent" && other.state === "done" && other.exitAt == null) {
+        if (
+          other.sessionId === sessionId && other.kind === "subagent" &&
+          other.state === "done" && other.exitAt == null &&
+          other.endedAt != null && (now - other.endedAt) > EXIT_GRACE_MS
+        ) {
           other.exitAt = now;
         }
       }
@@ -367,9 +374,12 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
       const root = ensureRoot(state, sessionId, now, false);
       root.state = "active";
       root.endedAt = undefined;
+      root.exitAt = undefined;
 
       const target = resolveOwner(state, p, now);
       target.state = "active";
+      target.exitAt = undefined;
+      target.endedAt = undefined;
       const text = (typeof p.prompt === "string" ? p.prompt : typeof p.message === "string" ? p.message : "") ?? "";
       if (text) {
         target.prompts.push({ at: now, text });
@@ -442,6 +452,12 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
       const sub = ensureSubagent(state, sessionId, key, p, now);
       sub.state = "active";
       sub.startedAt = sub.startedAt || now;
+      // Resurrected subagent: a prior UserPromptSubmit flagged exitAt while
+      // this slot was "done". If CC reuses the key (common when Task is
+      // re-invoked with the same parent_tool_use_id), the agent must come
+      // back fully visible — not get filtered out after EXIT_ANIM_MS.
+      sub.exitAt = undefined;
+      sub.endedAt = undefined;
       const lbl = subagentLabel(p);
       if (lbl) sub.label = lbl;
       pushActive(state, sessionId, key);

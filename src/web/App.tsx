@@ -362,17 +362,25 @@ function snapshotToFlow(
       for (const n of laidOut) if (!positions.has(n.id)) positions.set(n.id, n.position);
     }
   }
-  // Evict cached positions for agents that aren't visible anymore. Stale
-  // positions in the cache were the root cause of orphan bursts — bursts
-  // would render at the agent's last known spot even after the agent
-  // itself was filtered out of the canvas.
+  // Evict cached positions for agents that aren't in state.agents anymore.
+  // Stale positions for invisible-but-still-tracked agents are KEPT so a
+  // transient flicker out of visibleIds (e.g. one frame where isAgentVisible
+  // is false during a state transition) doesn't lose the position and snap
+  // the node to {0,0} on return — that was causing "nodes vanish on action
+  // change" while bursts (which gate on visibleIds) also disappeared.
   for (const id of Array.from(positions.keys())) {
-    if (!visibleIds.has(id)) positions.delete(id);
+    if (!state.agents.has(id)) positions.delete(id);
   }
-  const finalNodes = nodes.map(n => {
-    const p = pinned.get(n.id) ?? positions.get(n.id) ?? { x: 0, y: 0 };
-    return { ...n, position: p };
-  });
+  // For brand-new visible agents that ended up at {0,0} (no measurement yet,
+  // dagre placed at origin), defer rendering them until the next frame when
+  // measurements / layout settle. Returning them at {0,0} caused the
+  // overlap-at-origin visual where many nodes piled at the canvas corner.
+  const finalNodes: typeof nodes = [];
+  for (const n of nodes) {
+    const p = pinned.get(n.id) ?? positions.get(n.id);
+    if (!p) continue; // skip this frame — node will appear once laid out
+    finalNodes.push({ ...n, position: p });
+  }
   return { nodes: finalNodes, edges };
 }
 
@@ -620,7 +628,10 @@ function Inner() {
   const layoutSig = useMemo(() => {
     const ids: string[] = [];
     for (const a of stateRef.current.agents.values()) {
-      if (a.exitAt != null && now - a.exitAt > EXIT_ANIM_MS) continue;
+      // Mirror isAgentVisible exactly — layoutSig and visibleAgentIds must
+      // agree, otherwise dagre re-runs for agents that never render and
+      // the cached positions drift relative to what's actually on canvas.
+      if (!isAgentVisible(a, now)) continue;
       ids.push(a.id + (a.parentId ? `>${a.parentId}` : ""));
     }
     ids.sort();
