@@ -413,14 +413,27 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
       // for exit so the canvas stays focused on what's relevant to the new
       // request. Recently-finished subagents are spared so a fast follow-up
       // prompt while bursts are still settling doesn't yank them.
+      //
+      // Skip the exit-stamp entirely when processing a stale (replayed) event:
+      // exitAt would be set to event time (minutes/hours old), and the
+      // visibility gate compares to wall-clock Date.now() — `now - exitAt >>
+      // EXIT_ANIM_MS` instantly hides every subagent that wrapped before its
+      // turn's UserPromptSubmit. On refresh the user saw subagents appear
+      // (after SubagentStop applied) then vanish (after the trailing
+      // UserPromptSubmit). The intent of this block — "focus on current
+      // turn" — only makes sense for live events; replayed ones are
+      // reconstructing the past, where prior turns should stay on canvas.
+      const isStaleReplay = Date.now() - now > 30_000;
       const EXIT_GRACE_MS = 1500;
-      for (const other of state.agents.values()) {
-        if (
-          other.sessionId === sessionId && other.kind === "subagent" &&
-          other.state === "done" && other.exitAt == null &&
-          other.endedAt != null && (now - other.endedAt) > EXIT_GRACE_MS
-        ) {
-          other.exitAt = now;
+      if (!isStaleReplay) {
+        for (const other of state.agents.values()) {
+          if (
+            other.sessionId === sessionId && other.kind === "subagent" &&
+            other.state === "done" && other.exitAt == null &&
+            other.endedAt != null && (now - other.endedAt) > EXIT_GRACE_MS
+          ) {
+            other.exitAt = now;
+          }
         }
       }
       // Also reset session root back to active for the new request.

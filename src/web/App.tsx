@@ -493,6 +493,23 @@ function Inner() {
   }, [rf, restoredViewport]);
 
   // SSE subscription
+  //
+  // Replay handling: the server replays its ring buffer on connect. Each
+  // event carries its ORIGINAL receivedAt timestamp — minutes/hours old.
+  // The reducer treats `now = env.receivedAt`, so on a replayed
+  // UserPromptSubmit it stamps `exitAt` on prior-turn subagents with that
+  // stale time. Visibility (isAgentVisible) compares to wall-clock
+  // Date.now(), so `now - exitAt >> EXIT_ANIM_MS` immediately → those
+  // subagents get filtered out on the very next render.
+  //
+  // The intended end-state (stale subagents hidden) is correct. The bug
+  // is purely visual: rerender() runs after EVERY event during replay, so
+  // the user sees subagents flash visible (after SubagentStop applied,
+  // before the trailing UserPromptSubmit stamps exitAt), then vanish.
+  // Fix: for stale events (receivedAt much older than wall clock), skip
+  // immediate rerender and coalesce into one debounced render once the
+  // stream goes quiet. Live events render synchronously as before.
+  const replayRenderTimerRef = useRef<number | null>(null);
   useEffect(() => {
     const es = new EventSource("/events");
     es.addEventListener("open", () => { setLive(true); setEverConnected(true); });
@@ -502,13 +519,32 @@ function Inner() {
         const env: HookEnvelope = JSON.parse((e as MessageEvent).data);
         if (paused) { queueRef.current.push(env); return; }
         stateRef.current = applyEvent(stateRef.current, env);
-        // Session recap modal is opt-in only — user opens it by clicking
-        // the "summary" button on a done root node. Auto-opening on
-        // Stop/SessionEnd interrupted live work too aggressively.
-        rerender();
+        const isStale = Date.now() - env.receivedAt > 30_000;
+        if (isStale) {
+          if (replayRenderTimerRef.current != null) {
+            window.clearTimeout(replayRenderTimerRef.current);
+          }
+          replayRenderTimerRef.current = window.setTimeout(() => {
+            replayRenderTimerRef.current = null;
+            rerender();
+          }, 120);
+        } else {
+          // Live event — flush any pending replay render and render now.
+          if (replayRenderTimerRef.current != null) {
+            window.clearTimeout(replayRenderTimerRef.current);
+            replayRenderTimerRef.current = null;
+          }
+          rerender();
+        }
       } catch { /* ignore */ }
     });
-    return () => es.close();
+    return () => {
+      es.close();
+      if (replayRenderTimerRef.current != null) {
+        window.clearTimeout(replayRenderTimerRef.current);
+        replayRenderTimerRef.current = null;
+      }
+    };
   }, [paused, rerender]);
 
   // Drain queue when un-paused
@@ -598,7 +634,11 @@ function Inner() {
       const t = Date.now();
       const liveAgents: { id: string }[] = [];
       for (const a of state.agents.values()) {
-        if (a.exitAt != null && t - a.exitAt > EXIT_ANIM_MS) continue;
+        // Mirror isAgentVisible — was inline `exitAt + EXIT_ANIM_MS` only,
+        // which skipped the ghost-session filter and disagreed with the node
+        // renderer when stale-exitAt replays excluded subagents that the
+        // canvas was still showing. Use the single source of truth.
+        if (!isAgentVisible(a, t)) continue;
         liveAgents.push({ id: a.id });
       }
       if (liveAgents.length === 0) return;
