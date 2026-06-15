@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ReactFlow, {
   Background,
   Controls,
+  ControlButton,
   MiniMap,
   type Edge,
   type Node,
@@ -549,8 +550,30 @@ function Inner() {
   // when a new session arrives and dagre shifts everything off-screen.
   const lastInteractRef = useRef(0);
   const markInteract = useCallback(() => { lastInteractRef.current = Date.now(); }, []);
+  // Sticky "user took the wheel" flag. Once the user manually pans, zooms,
+  // or drags a node, autofitting is suspended until they hit the recenter
+  // button. Persisted so a refresh respects the user's preference.
+  const AUTOFIT_KEY = "agent-dag.autoFitDisabled";
+  const autoFitDisabledRef = useRef<boolean>((() => {
+    if (typeof window === "undefined") return false;
+    try { return window.localStorage.getItem(AUTOFIT_KEY) === "1"; } catch { return false; }
+  })());
+  const [autoFitDisabled, setAutoFitDisabled] = useState<boolean>(autoFitDisabledRef.current);
+  const disableAutoFit = useCallback(() => {
+    if (autoFitDisabledRef.current) return;
+    autoFitDisabledRef.current = true;
+    setAutoFitDisabled(true);
+    try { window.localStorage.setItem(AUTOFIT_KEY, "1"); } catch {}
+  }, []);
+  const enableAutoFitAndRefit = useCallback(() => {
+    autoFitDisabledRef.current = false;
+    setAutoFitDisabled(false);
+    try { window.localStorage.removeItem(AUTOFIT_KEY); } catch {}
+    try { rf.fitView({ padding: 0.25, duration: 400 }); } catch {}
+  }, [rf]);
   useEffect(() => {
     const id = setInterval(() => {
+      if (autoFitDisabledRef.current) return;
       if (Date.now() - lastInteractRef.current < 800) return;
       const state = stateRef.current;
       const t = Date.now();
@@ -635,11 +658,14 @@ function Inner() {
   // structural shifts: agent added/removed, parent relationship changed, or
   // a measurement that moved a node. Catches the "14 agents in state but
   // none visible" case where count is stable but the layout reflowed.
+  // Suspended entirely when the user has taken manual control of the
+  // viewport (see autoFitDisabledRef + recenter button in Controls).
   useEffect(() => {
     if (lastLayoutSigForFitRef.current === layoutSig) return;
     const prev = lastLayoutSigForFitRef.current;
     lastLayoutSigForFitRef.current = layoutSig;
     if (!prev) return; // first render — let initial fitView prop handle it
+    if (autoFitDisabledRef.current) return;
     const tnow = Date.now();
     if (tnow - lastFitTimeRef.current > 1200) {
       try { rf.fitView({ padding: 0.25, duration: 400 }); } catch {}
@@ -647,6 +673,7 @@ function Inner() {
     }
     if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
     fitTimerRef.current = window.setTimeout(() => {
+      if (autoFitDisabledRef.current) return;
       try { rf.fitView({ padding: 0.25, duration: 500 }); } catch {}
       lastFitTimeRef.current = Date.now();
     }, 280);
@@ -1047,6 +1074,12 @@ function Inner() {
           selectionOnDrag={false}
           onNodeClick={(e, n) => selectAgent(n.id, e.shiftKey)}
           onPaneClick={() => clearSelection()}
+          onMoveStart={() => {
+            // User-initiated pan/zoom only (programmatic fitView doesn't
+            // fire onMoveStart). Sticky-disable autofit until the recenter
+            // button is hit.
+            disableAutoFit();
+          }}
           onMove={(_, vp) => {
             markInteract();
             // Debounce viewport persistence — pan/zoom fires many times
@@ -1056,6 +1089,7 @@ function Inner() {
           }}
           onNodeDragStart={(_, n) => {
             markInteract();
+            disableAutoFit();
             pinnedRef.current.set(n.id, { x: n.position.x, y: n.position.y });
           }}
           onNodeDrag={(_, n) => {
@@ -1086,7 +1120,22 @@ function Inner() {
             now={now}
             onOpenTool={setOpenedToolId}
           />
-          <Controls showInteractive={false} />
+          <Controls showInteractive={false}>
+            <ControlButton
+              onClick={enableAutoFitAndRefit}
+              title={autoFitDisabled
+                ? "Recenter view + re-enable autofit"
+                : "Recenter view (autofit already on)"}
+              aria-label="Recenter view"
+              style={autoFitDisabled ? { color: "var(--accent)" } : undefined}
+            >
+              {/* crosshair / target — recenter affordance */}
+              <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden>
+                <circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" strokeWidth="2" />
+                <path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
+              </svg>
+            </ControlButton>
+          </Controls>
           <MiniMap
             zoomable
             pannable
