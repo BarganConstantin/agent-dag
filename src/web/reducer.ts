@@ -326,14 +326,25 @@ export function applyEvent(state: GraphState, env: HookEnvelope): GraphState {
   const sessionId = p.session_id ?? "unknown";
 
   // ModelObserved is a synthetic enrichment event emitted by the server
-  // after it scans the transcript file. Apply to EVERY agent in the
-  // session (including ones created before the model was resolved).
-  // Don't create an agent for it — just backfill what's there.
+  // after it scans the root session's transcript file. Apply to the ROOT
+  // agent only — subagents may run under a different model (Sonnet child
+  // of an Opus parent etc.), and blanket-overwriting per session would
+  // clobber the subagent's own model with whatever the root just used.
+  // Per-subagent models arrive via `subagentModels` map when the server
+  // can attribute transcript blocks via `isSidechain`/`parentToolUseID`.
   if (name === "ModelObserved") {
     const m = typeof p.model === "string" ? p.model : null;
     if (m) {
-      for (const a of state.agents.values()) {
-        if (a.sessionId === sessionId) a.model = m;
+      const root = state.agents.get(sessionId);
+      if (root) root.model = m;
+    }
+    const subs = p.subagentModels as Record<string, string> | undefined;
+    if (subs && typeof subs === "object") {
+      for (const [parentToolUseId, subModel] of Object.entries(subs)) {
+        if (typeof subModel !== "string") continue;
+        const subId = `${sessionId}::${parentToolUseId}`;
+        const sub = state.agents.get(subId);
+        if (sub) sub.model = subModel;
       }
     }
     return state;

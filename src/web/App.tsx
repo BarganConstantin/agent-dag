@@ -1159,6 +1159,7 @@ function Inner() {
         {timelineOpen && agentCount > 0 && (
           <TimelineStrip
             agents={stateRef.current.agents}
+            visibleAgentIds={visibleAgentIds}
             now={now}
             costSamples={costSamplesRef.current}
             onSelect={(id) => selectAgent(id, false)}

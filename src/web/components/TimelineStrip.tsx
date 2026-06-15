@@ -59,9 +59,10 @@ interface Dot {
   errored: boolean;
 }
 
-function collectDots(agents: Map<string, AgentNodeData>, earliest: number): Dot[] {
+function collectDots(agents: Map<string, AgentNodeData>, visibleAgentIds: Set<string>, earliest: number): Dot[] {
   const out: Dot[] = [];
   for (const a of agents.values()) {
+    if (!visibleAgentIds.has(a.id)) continue;
     for (const t of a.tools) {
       if (t.startedAt < earliest) continue;
       out.push({
@@ -82,6 +83,7 @@ function collectDots(agents: Map<string, AgentNodeData>, earliest: number): Dot[
 
 interface Props {
   agents: Map<string, AgentNodeData>;
+  visibleAgentIds: Set<string>;
   now: number;
   /** Per-second cumulative cost snapshots, oldest first. */
   costSamples: Array<{ t: number; cost: number }>;
@@ -90,12 +92,12 @@ interface Props {
   onClose: () => void;
 }
 
-export default function TimelineStrip({ agents, now, costSamples, onSelect, onOpenTool, onClose }: Props) {
+export default function TimelineStrip({ agents, visibleAgentIds, now, costSamples, onSelect, onOpenTool, onClose }: Props) {
   const [mode, setMode] = useState<Mode>(loadMode);
   useEffect(() => { saveMode(mode); }, [mode]);
 
   const earliest = now - WINDOW_MS;
-  const dots = useMemo(() => collectDots(agents, earliest), [agents, earliest]);
+  const dots = useMemo(() => collectDots(agents, visibleAgentIds, earliest), [agents, visibleAgentIds, earliest]);
   const counts = useMemo(() => {
     const m = new Map<Category, number>();
     for (const d of dots) m.set(d.category, (m.get(d.category) ?? 0) + 1);

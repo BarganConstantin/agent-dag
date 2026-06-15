@@ -73,32 +73,52 @@ async function maybeRotatePersistFile() {
 // payloads for that session before broadcasting, (b) emit a synthetic
 // `ModelObserved` event so the client backfills agents created before
 // the model was resolved.
-const modelBySession = new Map();         // sessionId -> "claude-…"
+const modelBySession = new Map();         // sessionId -> { rootModel, subsSig }
 const pendingTranscriptReads = new Set(); // sessionId currently being read
+const modelLastReadAt = new Map();        // sessionId -> ms timestamp (re-read throttle)
+const MODEL_READ_THROTTLE_MS = 2500;
 
 async function readModelFromTranscript(path) {
+  // Returns { rootModel, subagentModels } — root is the most recent
+  // non-sidechain assistant model, subagents are attributed by the Task
+  // tool_use id that owns them. CC transcripts mark subagent messages
+  // with `isSidechain:true` and (for current schemas) a `parentToolUseID`
+  // or `parent_tool_use_id` referencing the Task invocation.
   try {
     const s = await stat(path);
     if (s.size === 0) return null;
-    // Read up to last 128 KB — plenty for the most-recent model
-    // declaration. Reading from the tail handles sessions that switched
-    // model mid-conversation (we want the current one).
-    const TAIL = 128 * 1024;
-    const start = Math.max(0, s.size - TAIL);
     const fh = await open(path, "r");
+    let text;
     try {
-      const len = s.size - start;
-      const buf = Buffer.alloc(len);
-      await fh.read(buf, 0, len, start);
-      const text = buf.toString("utf8");
-      // Scan all matches and return the LAST one — most recent model used.
-      const re = /"model"\s*:\s*"(claude[-_][^"]+)"/gi;
-      let last = null;
-      for (const m of text.matchAll(re)) last = m[1];
-      return last;
+      const buf = Buffer.alloc(s.size);
+      await fh.read(buf, 0, s.size, 0);
+      text = buf.toString("utf8");
     } finally {
       await fh.close();
     }
+    let rootModel = null;
+    const subagentModels = {};
+    for (const line of text.split("\n")) {
+      if (!line) continue;
+      let obj;
+      try { obj = JSON.parse(line); } catch { continue; }
+      const msg = obj && obj.message;
+      // Assistant model entries live on either obj.model or obj.message.model
+      // depending on CC schema version. Accept either.
+      const model = (msg && typeof msg.model === "string" && /^claude[-_]/i.test(msg.model)) ? msg.model
+                  : (typeof obj.model === "string" && /^claude[-_]/i.test(obj.model))         ? obj.model
+                  : null;
+      if (!model) continue;
+      const isSide = obj.isSidechain === true || obj.is_sidechain === true;
+      const ptid = obj.parentToolUseID || obj.parent_tool_use_id || obj.parentToolUseId || null;
+      if (isSide && ptid) {
+        subagentModels[ptid] = model;
+      } else if (!isSide) {
+        rootModel = model;
+      }
+    }
+    if (!rootModel && Object.keys(subagentModels).length === 0) return null;
+    return { rootModel, subagentModels };
   } catch {
     return null;
   }
@@ -109,16 +129,29 @@ function maybeResolveModel(payload) {
   const sid = payload.session_id;
   const tp = payload.transcript_path;
   if (!sid || !tp) return;
-  if (modelBySession.has(sid)) return;
+  // Re-read on every event for this session — the cache was preventing us
+  // from picking up subagent models that arrive after the root is known.
+  // Throttle so we don't thrash the filesystem.
   if (pendingTranscriptReads.has(sid)) return;
+  const now = Date.now();
+  const last = modelLastReadAt.get(sid) ?? 0;
+  if (now - last < MODEL_READ_THROTTLE_MS) return;
+  modelLastReadAt.set(sid, now);
   pendingTranscriptReads.add(sid);
   readModelFromTranscript(tp)
-    .then(model => {
-      if (!model) return;
-      modelBySession.set(sid, model);
-      // Synthetic enrichment event — reducer applies to every agent in
-      // this session, including ones created before we resolved.
-      pushEvent({ hook_event_name: "ModelObserved", session_id: sid, model }, "internal");
+    .then(result => {
+      if (!result) return;
+      const { rootModel, subagentModels } = result;
+      const prev = modelBySession.get(sid);
+      const subsSig = JSON.stringify(subagentModels);
+      if (prev && prev.rootModel === rootModel && prev.subsSig === subsSig) return;
+      modelBySession.set(sid, { rootModel, subsSig });
+      pushEvent({
+        hook_event_name: "ModelObserved",
+        session_id: sid,
+        model: rootModel,
+        subagentModels,
+      }, "internal");
     })
     .catch(() => {})
     .finally(() => pendingTranscriptReads.delete(sid));
