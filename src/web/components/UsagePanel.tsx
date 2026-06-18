@@ -69,6 +69,45 @@ function CostBar({ cost }: { cost: CostBreakdown }) {
   );
 }
 
+// ── Codex usage row (token counts, no cap → no %) ─────────────────────────
+function CodexUsageRow({ label, win }: { label: string; win: { inputTokens: number; outputTokens: number; cacheReadTokens: number; totalTokens: number; sessionCount: number } }) {
+  const total = win.totalTokens;
+  if (total === 0) {
+    return (
+      <div className="qb-row">
+        <div className="qb-meta">
+          <span className="qb-label">{label}</span>
+          <span className="qb-pct" style={{ color: "var(--fg-dim)" }}>no sessions</span>
+        </div>
+      </div>
+    );
+  }
+  const sessions = win.sessionCount;
+  return (
+    <div className="qb-row">
+      <div className="qb-meta">
+        <span className="qb-label">{label}</span>
+        <span className="qb-pct" style={{ color: "var(--accent)" }}>{fmtTokens(total)}</span>
+      </div>
+      <div className="qb-track">
+        {/* Visual bar: split by input vs output+cache */}
+        <div
+          className="qb-fill"
+          style={{
+            width: `${Math.min(100, (win.inputTokens / Math.max(1, total)) * 100)}%`,
+            background: "var(--accent)",
+          }}
+        />
+      </div>
+      <div className="qb-reset">
+        {fmtTokens(win.inputTokens)} in · {fmtTokens(win.outputTokens)} out
+        {win.cacheReadTokens > 0 && ` · ${fmtTokens(win.cacheReadTokens)} cached`}
+        {` · ${sessions} session${sessions !== 1 ? "s" : ""}`}
+      </div>
+    </div>
+  );
+}
+
 // ── Quota bar ──────────────────────────────────────────────────────────────
 function QuotaBar({ pct, label, reset, warn }: { pct: number; label: string; reset?: string; warn?: boolean }) {
   const capped = Math.min(100, Math.max(0, pct));
@@ -114,6 +153,47 @@ function useQuota() {
   return { quota, loading, refresh };
 }
 
+// ── Codex usage types + hook ───────────────────────────────────────────────
+interface CodexWindow {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  totalTokens: number;
+  sessionCount: number;
+}
+interface CodexUsageData {
+  ok: boolean;
+  window5h?: CodexWindow;
+  window7d?: CodexWindow;
+  fetchedAt?: number;
+}
+
+const CODEX_POLL_MS = 60_000;
+
+function useCodexUsage() {
+  const [data, setData] = useState<CodexUsageData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  const fetch_ = async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      const res = await fetch("/api/codex-usage");
+      if (res.ok) setData(await res.json());
+    } catch { /* server unreachable */ }
+    finally { if (!silent) setLoading(false); }
+  };
+
+  useEffect(() => {
+    fetch_();
+    timerRef.current = window.setInterval(() => fetch_(true), CODEX_POLL_MS);
+    return () => { if (timerRef.current != null) window.clearInterval(timerRef.current); };
+  }, []);
+
+  const refresh = () => fetch_();
+  return { data, loading, refresh };
+}
+
 interface Props {
   state: GraphState;
   now: number;
@@ -121,7 +201,8 @@ interface Props {
 }
 
 export default function UsagePanel({ state, now, onClose }: Props) {
-  const { quota, loading, refresh } = useQuota();
+  const { quota, loading: quotaLoading, refresh: refreshQuota } = useQuota();
+  const { data: codexUsage, loading: codexLoading, refresh: refreshCodex } = useCodexUsage();
   const { byModel, totalCost, totalTokens, burnRate } = useMemo(() => {
     const modelMap = new Map<string, ModelRow>();
     const totalCostAcc: CostBreakdown = { total: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -224,17 +305,17 @@ export default function UsagePanel({ state, now, onClose }: Props) {
         >×</button>
       </div>
 
-      {/* ── Subscription quota ── */}
+      {/* ── Claude quota ── */}
       <section className="up-section up-quota-section">
         <div className="up-quota-header">
           <h4 className="up-section-title" style={{ margin: 0 }}>Claude quota</h4>
           <button
             type="button"
             className="btn up-refresh-btn"
-            onClick={refresh}
-            disabled={loading}
+            onClick={refreshQuota}
+            disabled={quotaLoading}
             title="Re-fetch quota from claude CLI"
-          >{loading ? "…" : "↻"}</button>
+          >{quotaLoading ? "…" : "↻"}</button>
         </div>
         {quota?.ok ? (
           <div className="up-quota-bars">
@@ -264,6 +345,30 @@ export default function UsagePanel({ state, now, onClose }: Props) {
             <span>Quota unavailable.</span>
             <span className="up-quota-hint">Run <code>/usage</code> in a claude session, then click ↻</span>
           </div>
+        ) : (
+          <div className="up-quota-na up-quota-loading">Checking…</div>
+        )}
+      </section>
+
+      {/* ── Codex usage ── */}
+      <section className="up-section up-quota-section">
+        <div className="up-quota-header">
+          <h4 className="up-section-title" style={{ margin: 0 }}>Codex usage</h4>
+          <button
+            type="button"
+            className="btn up-refresh-btn"
+            onClick={refreshCodex}
+            disabled={codexLoading}
+            title="Re-scan Codex session files"
+          >{codexLoading ? "…" : "↻"}</button>
+        </div>
+        {codexUsage?.ok ? (
+          <div className="up-quota-bars">
+            <CodexUsageRow label="5-hour window" win={codexUsage.window5h!} />
+            <CodexUsageRow label="7-day window"  win={codexUsage.window7d!} />
+          </div>
+        ) : codexUsage?.ok === false ? (
+          <div className="up-quota-na">No Codex sessions found.</div>
         ) : (
           <div className="up-quota-na up-quota-loading">Checking…</div>
         )}
