@@ -65,8 +65,9 @@ function saveSessionListOpen(open: boolean): void {
   try { window.localStorage.setItem(SESSION_LIST_OPEN_KEY, open ? "1" : "0"); } catch {}
 }
 function loadTimelineOpen(): boolean {
-  if (typeof window === "undefined") return true;
-  try { return window.localStorage.getItem(TIMELINE_OPEN_KEY) !== "0"; } catch { return true; }
+  if (typeof window === "undefined") return false;
+  const stored = window.localStorage.getItem(TIMELINE_OPEN_KEY);
+  try { return stored === null ? false : stored !== "0"; } catch { return false; }
 }
 function saveTimelineOpen(open: boolean): void {
   if (typeof window === "undefined") return;
@@ -81,8 +82,9 @@ function saveDetailOpen(open: boolean): void {
   try { window.localStorage.setItem(DETAIL_OPEN_KEY, open ? "1" : "0"); } catch {}
 }
 function loadUsagePanelOpen(): boolean {
-  if (typeof window === "undefined") return false;
-  try { return window.localStorage.getItem(USAGE_PANEL_OPEN_KEY) === "1"; } catch { return false; }
+  if (typeof window === "undefined") return true;
+  const stored = window.localStorage.getItem(USAGE_PANEL_OPEN_KEY);
+  try { return stored === null ? true : stored === "1"; } catch { return true; }
 }
 function saveUsagePanelOpen(open: boolean): void {
   if (typeof window === "undefined") return;
