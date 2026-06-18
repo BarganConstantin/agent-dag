@@ -993,6 +993,14 @@ function handleSse(req, res) {
   });
 }
 
+async function handleQuota(_req, res) {
+  const { fetchClaudeQuota } = await import(
+    pathToFileURL(join(PKG_ROOT, "src/server/quota.mjs")).href
+  );
+  const quota = await fetchClaudeQuota();
+  send(res, 200, quota);
+}
+
 function handleHealth(_req, res) {
   send(res, 200, {
     ok: true,
@@ -1059,6 +1067,7 @@ export async function startServer({ port = 4317, host = "127.0.0.1", persist = n
     if (req.method === "POST" && url.pathname === "/api/event") return handleEventIngest(req, res);
     if (req.method === "GET"  && url.pathname === "/api/health") return handleHealth(req, res);
     if (req.method === "GET"  && url.pathname === "/events")     return handleSse(req, res);
+    if (req.method === "GET"  && url.pathname === "/api/quota")  return handleQuota(req, res);
 
     if (req.method === "GET" && url.pathname === "/api/events") {
       const since = Number(url.searchParams.get("since") ?? 0);

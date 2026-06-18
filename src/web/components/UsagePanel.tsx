@@ -1,11 +1,23 @@
 // UsagePanel — floating panel showing aggregated token usage and cost
 // across all sessions, by model and by session. Toggled via $ button
 // in the topbar or the U keyboard shortcut.
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { costForUsage, fmtCost, fmtCostRate, type CostBreakdown } from "../pricing";
 import type { GraphState } from "../reducer";
 import type { AgentState } from "../types";
 import { shortModel } from "./AgentNode";
+
+// ── Quota types ────────────────────────────────────────────────────────────
+interface QuotaData {
+  ok: boolean;
+  session5hPct?: number;
+  session5hReset?: string;
+  week7dPct?: number;
+  week7dReset?: string;
+  weekSonnetPct?: number;
+  weekOpusPct?: number;
+  fetchedAt?: number;
+}
 
 function fmtTokens(n: number): string {
   if (n < 1000) return `${n}`;
@@ -57,6 +69,51 @@ function CostBar({ cost }: { cost: CostBreakdown }) {
   );
 }
 
+// ── Quota bar ──────────────────────────────────────────────────────────────
+function QuotaBar({ pct, label, reset, warn }: { pct: number; label: string; reset?: string; warn?: boolean }) {
+  const capped = Math.min(100, Math.max(0, pct));
+  const color = capped >= 90 ? "var(--err)" : capped >= 70 ? "var(--warn)" : "var(--accent)";
+  return (
+    <div className="qb-row">
+      <div className="qb-meta">
+        <span className="qb-label">{label}</span>
+        <span className="qb-pct" style={{ color }}>{capped}%</span>
+      </div>
+      <div className="qb-track">
+        <div className="qb-fill" style={{ width: `${capped}%`, background: color }} />
+      </div>
+      {reset && <div className="qb-reset">resets {reset}</div>}
+    </div>
+  );
+}
+
+// ── Quota fetch hook ───────────────────────────────────────────────────────
+const QUOTA_POLL_MS = 120_000; // match server cache TTL
+
+function useQuota() {
+  const [quota, setQuota] = useState<QuotaData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  const fetch_ = async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      const res = await fetch("/api/quota");
+      if (res.ok) setQuota(await res.json());
+    } catch { /* server unreachable */ }
+    finally { if (!silent) setLoading(false); }
+  };
+
+  useEffect(() => {
+    fetch_();
+    timerRef.current = window.setInterval(() => fetch_(true), QUOTA_POLL_MS);
+    return () => { if (timerRef.current != null) window.clearInterval(timerRef.current); };
+  }, []);
+
+  const refresh = () => fetch_();
+  return { quota, loading, refresh };
+}
+
 interface Props {
   state: GraphState;
   now: number;
@@ -64,6 +121,7 @@ interface Props {
 }
 
 export default function UsagePanel({ state, now, onClose }: Props) {
+  const { quota, loading, refresh } = useQuota();
   const { byModel, totalCost, totalTokens, burnRate } = useMemo(() => {
     const modelMap = new Map<string, ModelRow>();
     const totalCostAcc: CostBreakdown = { total: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -166,6 +224,52 @@ export default function UsagePanel({ state, now, onClose }: Props) {
         >×</button>
       </div>
 
+      {/* ── Subscription quota ── */}
+      <section className="up-section up-quota-section">
+        <div className="up-quota-header">
+          <h4 className="up-section-title" style={{ margin: 0 }}>Claude quota</h4>
+          <button
+            type="button"
+            className="btn up-refresh-btn"
+            onClick={refresh}
+            disabled={loading}
+            title="Re-fetch quota from claude CLI"
+          >{loading ? "…" : "↻"}</button>
+        </div>
+        {quota?.ok ? (
+          <div className="up-quota-bars">
+            {quota.session5hPct != null && (
+              <QuotaBar
+                label="5-hour window"
+                pct={quota.session5hPct}
+                reset={quota.session5hReset}
+              />
+            )}
+            {quota.week7dPct != null && (
+              <QuotaBar
+                label="7-day window"
+                pct={quota.week7dPct}
+                reset={quota.week7dReset}
+              />
+            )}
+            {quota.weekSonnetPct != null && (
+              <QuotaBar label="Sonnet (7d)" pct={quota.weekSonnetPct} />
+            )}
+            {quota.weekOpusPct != null && (
+              <QuotaBar label="Opus (7d)" pct={quota.weekOpusPct} />
+            )}
+          </div>
+        ) : quota?.ok === false ? (
+          <div className="up-quota-na">
+            <span>Quota unavailable.</span>
+            <span className="up-quota-hint">Run <code>/usage</code> in a claude session, then click ↻</span>
+          </div>
+        ) : (
+          <div className="up-quota-na up-quota-loading">Checking…</div>
+        )}
+      </section>
+
+      {/* ── Cost + tokens ── */}
       {hasCost ? (
         <>
           <div className="up-total">
