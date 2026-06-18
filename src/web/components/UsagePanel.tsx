@@ -134,22 +134,23 @@ function useQuota() {
   const [loading, setLoading] = useState(false);
   const timerRef = useRef<number | null>(null);
 
-  const fetch_ = async (silent = false) => {
-    if (!silent) setLoading(true);
+  const fetch_ = async (forceRefresh = false) => {
+    if (forceRefresh) setLoading(true);
     try {
-      const res = await fetch("/api/quota");
+      const url = forceRefresh ? "/api/quota?refresh=1" : "/api/quota";
+      const res = await fetch(url);
       if (res.ok) setQuota(await res.json());
     } catch { /* server unreachable */ }
-    finally { if (!silent) setLoading(false); }
+    finally { if (forceRefresh) setLoading(false); }
   };
 
   useEffect(() => {
-    fetch_();
-    timerRef.current = window.setInterval(() => fetch_(true), QUOTA_POLL_MS);
+    fetch_(true); // force on mount — avoids stale ok:false cache from prior run
+    timerRef.current = window.setInterval(() => fetch_(false), QUOTA_POLL_MS);
     return () => { if (timerRef.current != null) window.clearInterval(timerRef.current); };
   }, []);
 
-  const refresh = () => fetch_();
+  const refresh = () => fetch_(true);
   return { quota, loading, refresh };
 }
 
@@ -175,22 +176,23 @@ function useCodexUsage() {
   const [loading, setLoading] = useState(false);
   const timerRef = useRef<number | null>(null);
 
-  const fetch_ = async (silent = false) => {
-    if (!silent) setLoading(true);
+  const fetch_ = async (forceRefresh = false) => {
+    if (forceRefresh) setLoading(true);
     try {
-      const res = await fetch("/api/codex-usage");
+      const url = forceRefresh ? "/api/codex-usage?refresh=1" : "/api/codex-usage";
+      const res = await fetch(url);
       if (res.ok) setData(await res.json());
     } catch { /* server unreachable */ }
-    finally { if (!silent) setLoading(false); }
+    finally { if (forceRefresh) setLoading(false); }
   };
 
   useEffect(() => {
-    fetch_();
-    timerRef.current = window.setInterval(() => fetch_(true), CODEX_POLL_MS);
+    fetch_(false); // initial — just get current data, don't force (fast)
+    timerRef.current = window.setInterval(() => fetch_(false), CODEX_POLL_MS);
     return () => { if (timerRef.current != null) window.clearInterval(timerRef.current); };
   }, []);
 
-  const refresh = () => fetch_();
+  const refresh = () => fetch_(true);
   return { data, loading, refresh };
 }
 

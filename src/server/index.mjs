@@ -993,19 +993,23 @@ function handleSse(req, res) {
   });
 }
 
-async function handleQuota(_req, res) {
+async function handleQuota(req, res) {
   const { fetchClaudeQuota } = await import(
     pathToFileURL(join(PKG_ROOT, "src/server/quota.mjs")).href
   );
-  const quota = await fetchClaudeQuota();
+  const url = new URL(req.url, "http://localhost");
+  const force = url.searchParams.get("refresh") === "1";
+  const quota = await fetchClaudeQuota({ force });
   send(res, 200, quota);
 }
 
-async function handleCodexUsage(_req, res) {
+async function handleCodexUsage(req, res) {
   const { fetchCodexUsage } = await import(
     pathToFileURL(join(PKG_ROOT, "src/server/codex-usage.mjs")).href
   );
-  const usage = await fetchCodexUsage();
+  const url = new URL(req.url, "http://localhost");
+  const force = url.searchParams.get("refresh") === "1";
+  const usage = await fetchCodexUsage({ force });
   send(res, 200, usage);
 }
 

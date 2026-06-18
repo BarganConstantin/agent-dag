@@ -1,13 +1,14 @@
 // Fetches Claude rate-limit quota by running `claude --print /usage`.
-// On Windows the binary is a .cmd wrapper — we run it via cmd.exe.
+// On Windows the binary is a .cmd wrapper — we use exec() (shell-based)
+// so that cmd.exe handles quoting and stdin redirect correctly.
 // Caches the result for 2 minutes.
-import { execFile } from "node:child_process";
+import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, platform } from "node:os";
 
-const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 const IS_WIN = platform() === "win32";
 
 let _cache = null;
@@ -72,17 +73,21 @@ function parseUsageText(raw) {
   return Object.keys(result).length > 0 ? result : null;
 }
 
-/** Resolve the claude binary.
- *  On Windows, claude is a .cmd wrapper — return the full path so we can
- *  invoke it via cmd.exe. On Unix, look for the binary in common locations. */
-function findClaudeBin() {
+/** Build the shell command string for `claude --print /usage`.
+ *
+ *  We use exec() (shell-based) so cmd.exe / sh processes redirects.
+ *  On Windows: `< nul` closes stdin immediately, preventing the 3-second
+ *  "no stdin data" wait the claude CLI does when it detects a pipe.
+ *  On Unix: `< /dev/null` has the same effect.
+ */
+function buildQuotaShellCmd() {
   if (IS_WIN) {
     const npmBin = join(homedir(), "AppData", "Roaming", "npm", "claude.cmd");
-    if (existsSync(npmBin)) return { cmd: "cmd.exe", args: ["/c", npmBin] };
-    // Fallback: let cmd.exe find it via PATH.
-    return { cmd: "cmd.exe", args: ["/c", "claude.cmd"] };
+    const bin = existsSync(npmBin) ? npmBin : "claude.cmd";
+    // exec() on Windows uses cmd /c, so < nul redirect works fine.
+    // Wrap path in quotes in case of spaces in username.
+    return `"${bin}" --print /usage < nul`;
   }
-  // Unix: check PATH, then known install locations.
   const candidates = [
     "claude",
     join(homedir(), ".local", "bin", "claude"),
@@ -90,32 +95,33 @@ function findClaudeBin() {
     "/opt/homebrew/bin/claude",
   ];
   for (const c of candidates) {
-    if (!c.includes("/")) return { cmd: c, args: [] };
-    if (existsSync(c)) return { cmd: c, args: [] };
+    if (!c.includes("/") || existsSync(c)) return `${c} --print /usage < /dev/null`;
   }
-  return { cmd: "claude", args: [] };
+  return "claude --print /usage < /dev/null";
 }
 
 export async function fetchClaudeQuota({ force = false } = {}) {
   const now = Date.now();
   if (!force && _cache && now - _cacheAt < CACHE_MS) return _cache;
 
-  const { cmd, args } = findClaudeBin();
+  const shellCmd = buildQuotaShellCmd();
   let parsed = null;
 
   try {
-    const { stdout, stderr } = await execFileAsync(
-      cmd,
-      [...args, "--print", "/usage"],
-      {
-        timeout: 12_000,
-        env: { ...process.env, NO_COLOR: "1", TERM: "dumb" },
-      }
-    );
+    const { stdout, stderr } = await execAsync(shellCmd, {
+      timeout: 15_000,
+      env: { ...process.env, NO_COLOR: "1", TERM: "dumb" },
+      maxBuffer: 1024 * 1024, // 1 MB
+    });
     parsed = parseUsageText(stdout + "\n" + stderr);
   } catch (err) {
     // Binary not found or timed out — degrade gracefully.
-    console.error("agents-deck quota: claude CLI failed:", err?.message ?? err);
+    const msg = err?.stderr ? stripAnsi(err.stderr).trim() : (err?.message ?? String(err));
+    console.error("agents-deck quota: claude CLI failed:", msg);
+    // exec() may still have stdout on non-zero exit — try to parse it
+    if (err?.stdout || err?.stderr) {
+      parsed = parseUsageText((err.stdout ?? "") + "\n" + (err.stderr ?? ""));
+    }
   }
 
   const result = parsed
