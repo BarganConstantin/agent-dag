@@ -56,7 +56,11 @@ jobs:
       - name: Publish to npm (agent-dag, legacy alias)
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          if npm view "agent-dag@$VERSION" version >/dev/null 2>&1; then
+          # npm view prints the version string if published, empty otherwise
+          # (and exits 0 either way for an existing package) — so test the
+          # OUTPUT, not the exit code.
+          EXISTING=$(npm view "agent-dag@$VERSION" version 2>/dev/null || true)
+          if [ -n "$EXISTING" ]; then
             echo "agent-dag@$VERSION already published — skipping."
           else
             npm pkg set name=agent-dag
@@ -70,7 +74,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          if npm view "agents-deck@$VERSION" version >/dev/null 2>&1; then
+          EXISTING=$(npm view "agents-deck@$VERSION" version 2>/dev/null || true)
+          if [ -n "$EXISTING" ]; then
             echo "agents-deck@$VERSION already published — skipping."
           else
             npm pkg set name=agents-deck
