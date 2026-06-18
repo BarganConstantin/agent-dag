@@ -48,7 +48,7 @@ jobs:
 
       # Publish under BOTH names from the same build/tarball: the legacy name
       # (agent-dag) first so existing installs always update, then the primary
-      # name (agent-deck). Each publish is idempotent — it skips if that
+      # name (agents-deck). Each publish is idempotent — it skips if that
       # version is already on the registry — so the workflow is safe to re-run
       # (e.g. after fixing token scope) without erroring on the already-shipped
       # name. The two steps are independent: a failure in one does not block
@@ -61,19 +61,19 @@ jobs:
           else
             npm pkg set name=agent-dag
             npm publish --provenance --access public
-            npm pkg set name=agent-deck
+            npm pkg set name=agents-deck
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish to npm (agent-deck)
+      - name: Publish to npm (agents-deck)
         if: ${{ !cancelled() }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          if npm view "agent-deck@$VERSION" version >/dev/null 2>&1; then
-            echo "agent-deck@$VERSION already published — skipping."
+          if npm view "agents-deck@$VERSION" version >/dev/null 2>&1; then
+            echo "agents-deck@$VERSION already published — skipping."
           else
-            npm pkg set name=agent-deck
+            npm pkg set name=agents-deck
             npm publish --provenance --access public
           fi
         env:
@@ -85,5 +85,5 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           echo "### Published v$VERSION :rocket:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- https://www.npmjs.com/package/agent-deck/v/$VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "- https://www.npmjs.com/package/agents-deck/v/$VERSION" >> $GITHUB_STEP_SUMMARY
           echo "- https://www.npmjs.com/package/agent-dag/v/$VERSION (legacy alias)" >> $GITHUB_STEP_SUMMARY
