@@ -20,6 +20,7 @@ import SessionSummary from "./components/SessionSummary";
 import ContextModal from "./components/ContextModal";
 import SessionList from "./components/SessionList";
 import TimelineStrip from "./components/TimelineStrip";
+import UsagePanel from "./components/UsagePanel";
 import { autoLayout } from "./layout";
 import { applyEvent, initialState, pruneOldAgents, sessionHue, sweepStaleTools, type GraphState } from "./reducer";
 import { EXIT_ANIM_MS, isAgentVisible, computeVisibleIds } from "./visibility";
@@ -53,6 +54,7 @@ const SUMMARY_DISMISSED_KEY = "agent-dag.summariesDismissed";
 const SESSION_LIST_OPEN_KEY = "agent-dag.sessionListOpen";
 const TIMELINE_OPEN_KEY = "agent-dag.timelineOpen";
 const DETAIL_OPEN_KEY = "agent-dag.detailOpen";
+const USAGE_PANEL_OPEN_KEY = "agent-dag.usagePanelOpen";
 
 function loadSessionListOpen(): boolean {
   if (typeof window === "undefined") return true;
@@ -63,8 +65,9 @@ function saveSessionListOpen(open: boolean): void {
   try { window.localStorage.setItem(SESSION_LIST_OPEN_KEY, open ? "1" : "0"); } catch {}
 }
 function loadTimelineOpen(): boolean {
-  if (typeof window === "undefined") return true;
-  try { return window.localStorage.getItem(TIMELINE_OPEN_KEY) !== "0"; } catch { return true; }
+  if (typeof window === "undefined") return false;
+  const stored = window.localStorage.getItem(TIMELINE_OPEN_KEY);
+  try { return stored === null ? false : stored !== "0"; } catch { return false; }
 }
 function saveTimelineOpen(open: boolean): void {
   if (typeof window === "undefined") return;
@@ -77,6 +80,15 @@ function loadDetailOpen(): boolean {
 function saveDetailOpen(open: boolean): void {
   if (typeof window === "undefined") return;
   try { window.localStorage.setItem(DETAIL_OPEN_KEY, open ? "1" : "0"); } catch {}
+}
+function loadUsagePanelOpen(): boolean {
+  if (typeof window === "undefined") return true;
+  const stored = window.localStorage.getItem(USAGE_PANEL_OPEN_KEY);
+  try { return stored === null ? true : stored === "1"; } catch { return true; }
+}
+function saveUsagePanelOpen(open: boolean): void {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(USAGE_PANEL_OPEN_KEY, open ? "1" : "0"); } catch {}
 }
 
 function loadDismissedSummaries(): Set<string> {
@@ -465,6 +477,9 @@ function Inner() {
   /** Right detail panel visibility — persisted across refresh. */
   const [detailOpen, setDetailOpen] = useState<boolean>(loadDetailOpen);
   useEffect(() => { saveDetailOpen(detailOpen); }, [detailOpen]);
+  /** Usage panel visibility — persisted across refresh. */
+  const [usagePanelOpen, setUsagePanelOpen] = useState<boolean>(loadUsagePanelOpen);
+  useEffect(() => { saveUsagePanelOpen(usagePanelOpen); }, [usagePanelOpen]);
   /** Bumped on each group-drag move so snapshotToFlow recomputes immediately
    *  (reads the freshly-pinned positions) rather than waiting for the 250ms
    *  tick. A plain counter — value is irrelevant, only the change matters. */
@@ -985,6 +1000,7 @@ function Inner() {
       if (e.key === "f" || e.key === "F") handleFit();
       if (e.key === "l" || e.key === "L") setSessionListOpen(o => !o);
       if (e.key === "h" || e.key === "H") setTimelineOpen(o => !o);
+      if (e.key === "u" || e.key === "U") setUsagePanelOpen(o => !o);
       if (e.key === "j" || e.key === "J") stepAgent(1);
       if (e.key === "k" || e.key === "K") stepAgent(-1);
       if (e.key === "t" || e.key === "T") setTheme(t => (t === "dark" ? "light" : "dark"));
@@ -1122,6 +1138,12 @@ function Inner() {
             {paused ? `Resume${queueRef.current.length ? ` · ${queueRef.current.length}` : ""}` : "Pause"}
           </button>
           <button
+            className={`btn icon-btn ${usagePanelOpen ? "primary" : ""}`}
+            onClick={() => setUsagePanelOpen(o => !o)}
+            title={`${usagePanelOpen ? "Hide" : "Show"} usage panel (U)`}
+            aria-label="Toggle usage panel"
+          >$</button>
+          <button
             className={`btn icon-btn ${sessionListOpen ? "primary" : ""}`}
             onClick={() => setSessionListOpen(o => !o)}
             title={`${sessionListOpen ? "Hide" : "Show"} session list (L)`}
@@ -1151,6 +1173,14 @@ function Inner() {
           <span className="conn-dot" />
           Lost connection to agents-deck server. Reconnecting…
         </div>
+      )}
+
+      {usagePanelOpen && (
+        <UsagePanel
+          state={stateRef.current}
+          now={now}
+          onClose={() => setUsagePanelOpen(false)}
+        />
       )}
 
       {sessionListOpen && (
@@ -1468,6 +1498,7 @@ function EmptyDetail({ count }: { count: number }) {
         <div className="sc"><kbd>F</kbd><span>fit view</span></div>
         <div className="sc"><kbd>L</kbd><span>session list</span></div>
         <div className="sc"><kbd>H</kbd><span>activity timeline</span></div>
+        <div className="sc"><kbd>U</kbd><span>usage panel</span></div>
         <div className="sc"><kbd>C</kbd><span>clear canvas</span></div>
         <div className="sc"><kbd>T</kbd><span>toggle theme</span></div>
         <div className="sc"><kbd>Esc</kbd><span>deselect</span></div>

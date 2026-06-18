@@ -2481,3 +2481,259 @@ button.tool.clickable:last-child { border-bottom: none; }
 
 /* mini-map node strokes more visible */
 :root[data-theme="light"] .react-flow__minimap-node { stroke: rgba(15,23,42,0.25); }
+
+/* ---------------- usage panel ---------------- */
+
+.usage-panel {
+  position: fixed;
+  top: 60px;
+  right: 368px; /* clear the detail panel */
+  width: 280px;
+  max-height: calc(100vh - 76px);
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-2);
+  z-index: 20;
+  padding: 0 0 12px;
+}
+
+.up-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--line-soft);
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+.up-header h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+}
+.up-rate {
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--inflight);
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(240,171,252,0.12);
+}
+.up-close {
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  color: var(--muted);
+}
+
+.up-total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 14px 14px 6px;
+}
+.up-total-value {
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--ok);
+  line-height: 1;
+}
+.up-total-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.usage-panel .cost-bar {
+  margin: 4px 14px 10px;
+  border-radius: 3px;
+}
+
+.up-tokens-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 6px 14px 10px;
+}
+.up-tok {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.up-k {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: inherit;
+}
+
+.up-section {
+  padding: 0 14px;
+  margin-top: 4px;
+  border-top: 1px solid var(--line-soft);
+}
+.up-section-title {
+  margin: 8px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.up-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.up-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 10px;
+  padding: 0 0 4px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.up-table th:not(:first-child) { text-align: right; }
+.up-table td { padding: 4px 0; vertical-align: middle; }
+.up-model-name {
+  color: var(--text);
+  font-weight: 500;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.up-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted);
+  font-size: 11px;
+}
+.up-cost-val { color: var(--ok); }
+
+.up-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.up-session-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  padding: 3px 0;
+}
+.up-session-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.up-session-tokens {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+.up-session-cost {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--ok);
+  min-width: 36px;
+  text-align: right;
+}
+
+.up-hint {
+  padding: 8px 14px 4px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.up-empty {
+  padding: 20px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* Shift usage-panel left when session-list is closed (detail panel shifts too) */
+.app:not(:has(.detail)) .usage-panel { right: 8px; }
+
+/* ── quota bars ── */
+.up-quota-section { padding-top: 10px; border-top: none; }
+.up-quota-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.up-refresh-btn {
+  font-size: 14px;
+  padding: 1px 7px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.up-quota-bars { display: flex; flex-direction: column; gap: 10px; }
+.qb-row { display: flex; flex-direction: column; gap: 3px; }
+.qb-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+}
+.qb-label { color: var(--muted); }
+.qb-pct {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+}
+.qb-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+.qb-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 400ms ease;
+}
+.qb-reset {
+  font-size: 10px;
+  color: var(--muted-dim);
+}
+.up-quota-na {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.up-quota-hint { color: var(--muted-dim); }
+.up-quota-hint code {
+  background: var(--line);
+  padding: 0 3px;
+  border-radius: 3px;
+  font-size: 10.5px;
+}
+.up-quota-loading { font-size: 11px; color: var(--muted-dim); }
+
+:root[data-theme="light"] .up-rate {
+  background: rgba(126,34,206,0.10);
+}
