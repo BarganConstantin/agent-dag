@@ -2714,10 +2714,28 @@ button.tool.clickable:last-child { border-bottom: none; }
   border-radius: 3px;
   transition: width 400ms ease;
 }
+.qb-reset-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px;
+  min-height: 14px;
+}
 .qb-reset {
   font-size: 10px;
   color: var(--muted-dim);
 }
+.qb-pace {
+  font-size: 10px;
+  font-weight: 500;
+  text-align: right;
+  flex-shrink: 0;
+}
+.qb-limit-badge {
+  margin-left: 4px;
+  font-size: 10px;
+}
+.up-credits { color: var(--accent); }
 .up-quota-na {
   display: flex;
   flex-direction: column;

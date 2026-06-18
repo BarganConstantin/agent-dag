@@ -12,8 +12,12 @@ interface QuotaData {
   ok: boolean;
   session5hPct?: number;
   session5hReset?: string;
+  session5hResetAt?: number;   // unix seconds
+  session5hWindowSec?: number;
   week7dPct?: number;
   week7dReset?: string;
+  week7dResetAt?: number;      // unix seconds
+  week7dWindowSec?: number;
   weekSonnetPct?: number;
   weekOpusPct?: number;
   fetchedAt?: number;
@@ -108,20 +112,94 @@ function CodexUsageRow({ label, win }: { label: string; win: { inputTokens: numb
   );
 }
 
+// ── Countdown + pace helpers ───────────────────────────────────────────────
+function fmtCountdown(resetAtSec: number, nowSec: number): string | null {
+  const diff = resetAtSec - nowSec;
+  if (diff <= 0) return null;
+  const h = Math.floor(diff / 3600);
+  const m = Math.floor((diff % 3600) / 60);
+  if (h > 23) {
+    const d = Math.floor(diff / 86400);
+    const rh = Math.floor((diff % 86400) / 3600);
+    return `${d}d ${rh}h`;
+  }
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+interface PaceInfo {
+  label: string;
+  color: string;
+  runsOutIn?: string; // set when deficit and ETA < window remaining
+}
+
+function computePace(pct: number, resetAtSec: number, windowSec: number, nowSec: number): PaceInfo | null {
+  const remainSec  = Math.max(0, resetAtSec - nowSec);
+  const elapsedSec = Math.max(0, windowSec - remainSec);
+  if (elapsedSec < 120) return null; // too early to judge
+  const expectedPct = Math.min(100, (elapsedSec / windowSec) * 100);
+  const delta = pct - expectedPct;
+
+  if (Math.abs(delta) < 3) return { label: "on pace", color: "var(--accent)" };
+
+  if (delta > 0) {
+    // using more than expected → deficit
+    const remainPct = 100 - pct;
+    const ratePerSec = elapsedSec > 0 ? pct / elapsedSec : 0;
+    const runsOutSec = ratePerSec > 0 ? remainPct / ratePerSec : Infinity;
+    const info: PaceInfo = { label: `${Math.round(delta)}% ahead`, color: "var(--warn)" };
+    if (runsOutSec < remainSec && runsOutSec < 86400) {
+      const h = Math.floor(runsOutSec / 3600);
+      const m = Math.floor((runsOutSec % 3600) / 60);
+      info.runsOutIn = h > 0 ? `${h}h ${m}m` : `${m}m`;
+    }
+    return info;
+  }
+  // under-using → reserve
+  return { label: `${Math.round(-delta)}% reserve`, color: "var(--accent)" };
+}
+
 // ── Quota bar ──────────────────────────────────────────────────────────────
-function QuotaBar({ pct, label, reset, warn }: { pct: number; label: string; reset?: string; warn?: boolean }) {
+interface QuotaBarProps {
+  pct: number;
+  label: string;
+  reset?: string;
+  resetAt?: number;    // unix seconds — enables live countdown
+  windowSec?: number;  // enables pace calculation
+  limitReached?: boolean;
+  nowSec: number;      // current time in seconds (for countdown + pace)
+}
+function QuotaBar({ pct, label, reset, resetAt, windowSec, limitReached, nowSec }: QuotaBarProps) {
   const capped = Math.min(100, Math.max(0, pct));
-  const color = capped >= 90 ? "var(--err)" : capped >= 70 ? "var(--warn)" : "var(--accent)";
+  const isErr  = limitReached || capped >= 90;
+  const color  = isErr ? "var(--err)" : capped >= 70 ? "var(--warn)" : "var(--accent)";
+
+  const countdown = resetAt ? fmtCountdown(resetAt, nowSec) : null;
+  const pace = (resetAt && windowSec) ? computePace(capped, resetAt, windowSec, nowSec) : null;
+
   return (
     <div className="qb-row">
       <div className="qb-meta">
-        <span className="qb-label">{label}</span>
+        <span className="qb-label">
+          {label}
+          {limitReached && <span className="qb-limit-badge" title="Rate limit reached">⛔</span>}
+        </span>
         <span className="qb-pct" style={{ color }}>{capped}%</span>
       </div>
       <div className="qb-track">
         <div className="qb-fill" style={{ width: `${capped}%`, background: color }} />
       </div>
-      {reset && <div className="qb-reset">resets {reset}</div>}
+      <div className="qb-reset-row">
+        {countdown
+          ? <span className="qb-reset">resets in {countdown}</span>
+          : reset
+            ? <span className="qb-reset">resets {reset}</span>
+            : null}
+        {pace && (
+          <span className="qb-pace" style={{ color: pace.color }}>
+            {pace.runsOutIn ? `runs out in ${pace.runsOutIn}` : pace.label}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -160,8 +238,14 @@ interface CodexQuotaData {
   limitReached?: boolean;
   session5hPct?: number;
   session5hReset?: string;
+  session5hResetAt?: number;   // unix seconds
+  session5hWindowSec?: number;
   week7dPct?: number;
   week7dReset?: string;
+  week7dResetAt?: number;      // unix seconds
+  week7dWindowSec?: number;
+  creditsBalance?: string | null;
+  creditsUnlimited?: boolean;
   planType?: string;
   reason?: string;
   fetchedAt?: number;
@@ -240,6 +324,13 @@ export default function UsagePanel({ state, now, onClose }: Props) {
   const { quota, loading: quotaLoading, refresh: refreshQuota } = useQuota();
   const { data: codexQuota, loading: codexLoading, refresh: refreshCodex } = useCodexQuota();
   const { data: codexUsage } = useCodexUsage();
+
+  // Tick every 30s so countdowns + pace stay live without parent re-render
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const t = window.setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 30_000);
+    return () => window.clearInterval(t);
+  }, []);
   const { byModel, totalCost, totalTokens, burnRate } = useMemo(() => {
     const modelMap = new Map<string, ModelRow>();
     const totalCostAcc: CostBreakdown = { total: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -361,6 +452,9 @@ export default function UsagePanel({ state, now, onClose }: Props) {
                 label="5-hour window"
                 pct={quota.session5hPct}
                 reset={quota.session5hReset}
+                resetAt={quota.session5hResetAt}
+                windowSec={quota.session5hWindowSec}
+                nowSec={nowSec}
               />
             )}
             {quota.week7dPct != null && (
@@ -368,13 +462,16 @@ export default function UsagePanel({ state, now, onClose }: Props) {
                 label="7-day window"
                 pct={quota.week7dPct}
                 reset={quota.week7dReset}
+                resetAt={quota.week7dResetAt}
+                windowSec={quota.week7dWindowSec}
+                nowSec={nowSec}
               />
             )}
             {quota.weekSonnetPct != null && (
-              <QuotaBar label="Sonnet (7d)" pct={quota.weekSonnetPct} />
+              <QuotaBar label="Sonnet (7d)" pct={quota.weekSonnetPct} nowSec={nowSec} />
             )}
             {quota.weekOpusPct != null && (
-              <QuotaBar label="Opus (7d)" pct={quota.weekOpusPct} />
+              <QuotaBar label="Opus (7d)" pct={quota.weekOpusPct} nowSec={nowSec} />
             )}
           </div>
         ) : quota?.ok === false ? (
@@ -406,6 +503,10 @@ export default function UsagePanel({ state, now, onClose }: Props) {
                 label="5-hour window"
                 pct={codexQuota.session5hPct}
                 reset={codexQuota.session5hReset}
+                resetAt={codexQuota.session5hResetAt}
+                windowSec={codexQuota.session5hWindowSec}
+                limitReached={codexQuota.limitReached && codexQuota.session5hPct >= 100}
+                nowSec={nowSec}
               />
             )}
             {codexQuota.week7dPct != null && (
@@ -413,13 +514,24 @@ export default function UsagePanel({ state, now, onClose }: Props) {
                 label="7-day window"
                 pct={codexQuota.week7dPct}
                 reset={codexQuota.week7dReset}
+                resetAt={codexQuota.week7dResetAt}
+                windowSec={codexQuota.week7dWindowSec}
+                nowSec={nowSec}
               />
             )}
-            {/* token-count breakdown from local files (supplemental) */}
+            {/* token-count from local files + credits */}
             {codexUsage?.ok && codexUsage.window7d && codexUsage.window7d.sessionCount > 0 && (
               <div className="up-quota-sub">
                 {fmtTokens(codexUsage.window7d.totalTokens)} tokens · {codexUsage.window7d.sessionCount} sessions (7d)
               </div>
+            )}
+            {codexQuota.creditsBalance && !codexQuota.creditsUnlimited && (
+              <div className="up-quota-sub up-credits">
+                credits: ${codexQuota.creditsBalance}
+              </div>
+            )}
+            {codexQuota.creditsUnlimited && (
+              <div className="up-quota-sub up-credits">credits: unlimited</div>
             )}
           </div>
         ) : codexQuota?.ok === false ? (

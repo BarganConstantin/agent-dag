@@ -69,15 +69,23 @@ export async function fetchCodexQuota({ force = false } = {}) {
     const pw   = rl?.primary_window;    // 5-hour session window
     const sw   = rl?.secondary_window;  // 7-day weekly window
 
+    const creds = data?.credits;
     result = {
-      ok:              true,
-      limitReached:    rl?.limit_reached ?? false,
-      session5hPct:    pw?.used_percent  ?? null,
-      session5hReset:  pw?.reset_at  ? fmtReset(pw.reset_at)  : null,
-      week7dPct:       sw?.used_percent  ?? null,
-      week7dReset:     sw?.reset_at  ? fmtReset(sw.reset_at)  : null,
-      planType:        data?.plan_type   ?? null,
-      fetchedAt:       now,
+      ok:                  true,
+      limitReached:        rl?.limit_reached ?? false,
+      session5hPct:        pw?.used_percent        ?? null,
+      session5hReset:      pw?.reset_at ? fmtReset(pw.reset_at) : null,
+      session5hResetAt:    pw?.reset_at             ?? null,  // unix seconds
+      session5hWindowSec:  pw?.limit_window_seconds ?? 18000,
+      week7dPct:           sw?.used_percent        ?? null,
+      week7dReset:         sw?.reset_at ? fmtReset(sw.reset_at) : null,
+      week7dResetAt:       sw?.reset_at             ?? null,  // unix seconds
+      week7dWindowSec:     sw?.limit_window_seconds ?? 604800,
+      // credits (ChatGPT Plus top-up credits if any)
+      creditsBalance:      creds?.has_credits ? creds.balance : null,
+      creditsUnlimited:    creds?.unlimited   ?? false,
+      planType:            data?.plan_type    ?? null,
+      fetchedAt:           now,
     };
 
     // Additional model-specific limits (e.g. Codex Spark)

@@ -31,6 +31,21 @@ function stripAnsi(s) {
  *   "Current week (Sonnet only): 48% used · resets Jun 21, 9am (Europe/Chisinau)"
  *   "Current week (Opus only): ..."   (if present)
  */
+// Parse "Jun 18, 4:09pm" (local time, no tz) into unix seconds.
+// Claude shows times in the user's local timezone, so parsing as local is correct.
+function parseResetToSec(resetStr) {
+  if (!resetStr) return null;
+  try {
+    const year = new Date().getFullYear();
+    // "4:09pm" → "4:09 PM" so Date.parse handles it
+    const norm = resetStr
+      .replace(/(\d{1,2}:\d{2})(am|pm)/i, "$1 $2")
+      .trim();
+    const d = new Date(`${norm} ${year}`);
+    return isNaN(d.getTime()) ? null : Math.floor(d.getTime() / 1000);
+  } catch { return null; }
+}
+
 function parseUsageText(raw) {
   const text = stripAnsi(raw);
   const result = {};
@@ -41,27 +56,30 @@ function parseUsageText(raw) {
     if (!line) return null;
     const pctM = line.match(/(\d{1,3})\s*%/);
     const resetM = line.match(/resets\s+(.+)/i);
+    const resetFull = resetM
+      ? resetM[1].replace(/\(.*?\)/g, "").replace(/·/g, "").trim()
+      : null;
     return {
-      pct: pctM ? Math.min(100, parseInt(pctM[1], 10)) : null,
-      reset: resetM
-        ? resetM[1]
-            .replace(/\(.*?\)/g, "")  // strip timezone in parens
-            .replace(/·/g, "")
-            .trim()
-        : null,
+      pct:     pctM ? Math.min(100, parseInt(pctM[1], 10)) : null,
+      reset:   resetFull,
+      resetAt: parseResetToSec(resetFull),
     };
   };
 
   const session = extract(/current session/i);
   if (session?.pct != null) {
-    result.session5hPct = session.pct;
-    if (session.reset) result.session5hReset = session.reset;
+    result.session5hPct       = session.pct;
+    result.session5hWindowSec = 18000;
+    if (session.reset)   result.session5hReset   = session.reset;
+    if (session.resetAt) result.session5hResetAt  = session.resetAt;
   }
 
   const weekAll = extract(/current week\s*\(all models\)/i) || extract(/current week\s*[:·]/i);
   if (weekAll?.pct != null) {
-    result.week7dPct = weekAll.pct;
-    if (weekAll.reset) result.week7dReset = weekAll.reset;
+    result.week7dPct       = weekAll.pct;
+    result.week7dWindowSec = 604800;
+    if (weekAll.reset)   result.week7dReset   = weekAll.reset;
+    if (weekAll.resetAt) result.week7dResetAt  = weekAll.resetAt;
   }
 
   const weekSon = extract(/current week\s*\(sonnet/i);
