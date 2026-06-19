@@ -20,6 +20,7 @@ import SessionSummary from "./components/SessionSummary";
 import ContextModal from "./components/ContextModal";
 import SessionList from "./components/SessionList";
 import UsagePanel from "./components/UsagePanel";
+import UsageHistoryModal from "./components/UsageHistoryModal";
 import { autoLayout } from "./layout";
 import { applyEvent, initialState, pruneOldAgents, sessionHue, sweepStaleTools, type GraphState } from "./reducer";
 import { EXIT_ANIM_MS, isAgentVisible, computeVisibleIds } from "./visibility";
@@ -467,6 +468,8 @@ function Inner() {
   /** Usage panel visibility — persisted across refresh. */
   const [usagePanelOpen, setUsagePanelOpen] = useState<boolean>(loadUsagePanelOpen);
   useEffect(() => { saveUsagePanelOpen(usagePanelOpen); }, [usagePanelOpen]);
+  // ccusage history modal — transient (not persisted), opened from the toolbar.
+  const [usageHistoryOpen, setUsageHistoryOpen] = useState(false);
   /** Bumped on each group-drag move so snapshotToFlow recomputes immediately
    *  (reads the freshly-pinned positions) rather than waiting for the 250ms
    *  tick. A plain counter — value is irrelevant, only the change matters. */
@@ -969,6 +972,7 @@ function Inner() {
       if (e.key === "r" || e.key === "R") handleRelayout();
       if (e.key === "f" || e.key === "F") handleFit();
       if (e.key === "l" || e.key === "L") setSessionListOpen(o => !o);
+      if (e.key === "h" || e.key === "H") setUsageHistoryOpen(o => !o);
       if (e.key === "u" || e.key === "U") setUsagePanelOpen(o => !o);
       if (e.key === "j" || e.key === "J") stepAgent(1);
       if (e.key === "k" || e.key === "K") stepAgent(-1);
@@ -1118,6 +1122,12 @@ function Inner() {
             title={`${sessionListOpen ? "Hide" : "Show"} session list (L)`}
             aria-label="Toggle session list"
           >☰</button>
+          <button
+            className={`btn icon-btn ${usageHistoryOpen ? "primary" : ""}`}
+            onClick={() => setUsageHistoryOpen(o => !o)}
+            title="Usage history — ccusage (H)"
+            aria-label="Open usage history"
+          >📊</button>
           <button className="btn" onClick={handleRelayout} title="Auto-arrange — clear pins (R)">Re-layout</button>
           <button className="btn" onClick={handleClear} title="Clear canvas (C)">Clear</button>
           <button
@@ -1363,6 +1373,7 @@ function Inner() {
       )}
 
       {openedTool && <ToolModal tool={openedTool} onClose={() => setOpenedToolId(null)} />}
+      {usageHistoryOpen && <UsageHistoryModal onClose={() => setUsageHistoryOpen(false)} />}
       {contextFor && (() => {
         const root = stateRef.current.agents.get(contextFor);
         if (!root) return null;
@@ -1449,6 +1460,7 @@ function EmptyDetail({ count }: { count: number }) {
         <div className="sc"><kbd>R</kbd><span>re-arrange</span></div>
         <div className="sc"><kbd>F</kbd><span>fit view</span></div>
         <div className="sc"><kbd>L</kbd><span>session list</span></div>
+        <div className="sc"><kbd>H</kbd><span>usage history</span></div>
         <div className="sc"><kbd>U</kbd><span>usage panel</span></div>
         <div className="sc"><kbd>C</kbd><span>clear canvas</span></div>
         <div className="sc"><kbd>T</kbd><span>toggle theme</span></div>
