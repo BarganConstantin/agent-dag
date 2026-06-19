@@ -95,7 +95,6 @@ jobs:
           if [ -n "$EXISTING" ]; then
             echo "ccdeck@$VERSION already published — skipping."
           else
-            npm install --ignore-scripts
             npm publish --access public
           fi
         env:
