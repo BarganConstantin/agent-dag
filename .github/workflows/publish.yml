@@ -87,8 +87,10 @@ jobs:
       - name: Publish to npm (ccdeck, stub alias)
         if: ${{ !cancelled() }}
         run: |
-          cd ccdeck
           VERSION=$(node -p "require('./package.json').version")
+          cd ccdeck
+          npm pkg set version="$VERSION"
+          npm pkg set dependencies.agents-deck="$VERSION"
           EXISTING=$(npm view "ccdeck@$VERSION" version 2>/dev/null || true)
           if [ -n "$EXISTING" ]; then
             echo "ccdeck@$VERSION already published — skipping."

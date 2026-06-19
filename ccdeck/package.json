@@ -1,6 +1,6 @@
 {
   "name": "ccdeck",
-  "version": "1.0.0",
+  "version": "1.23.1",
   "description": "Alias for agents-deck — live canvas of Claude Code subagents.",
   "type": "module",
   "bin": {
@@ -10,7 +10,7 @@
     "bin"
   ],
   "dependencies": {
-    "agents-deck": "^1.23.0"
+    "agents-deck": "1.23.1"
   },
   "engines": {
     "node": ">=18"
