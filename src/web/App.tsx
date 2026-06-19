@@ -1127,7 +1127,13 @@ function Inner() {
             onClick={() => setUsageHistoryOpen(o => !o)}
             title="Usage history — ccusage (H)"
             aria-label="Open usage history"
-          >📊</button>
+          >
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden>
+              <line x1="3" y1="11.5" x2="3" y2="7" />
+              <line x1="7" y1="11.5" x2="7" y2="3" />
+              <line x1="11" y1="11.5" x2="11" y2="8.5" />
+            </svg>
+          </button>
           <button className="btn" onClick={handleRelayout} title="Auto-arrange — clear pins (R)">Re-layout</button>
           <button className="btn" onClick={handleClear} title="Clear canvas (C)">Clear</button>
           <button
