@@ -11,8 +11,9 @@ import { homedir, platform } from "node:os";
 const execAsync = promisify(exec);
 const IS_WIN = platform() === "win32";
 
-let _cache = null;
-let _cacheAt = 0;
+let _cache    = null;
+let _cacheAt  = 0;
+let _inflight = null;   // deduplicates concurrent exec() calls
 const CACHE_MS = 60_000;
 
 function stripAnsi(s) {
@@ -122,10 +123,20 @@ export async function fetchClaudeQuota({ force = false } = {}) {
   const now = Date.now();
   if (!force && _cache && now - _cacheAt < CACHE_MS) return _cache;
 
+  // If another exec() is already in flight, wait for it instead of spawning a
+  // second concurrent process (which can return empty output and overwrite the
+  // good result with 0%).
+  if (_inflight) return _inflight;
+
+  _inflight = _doFetch(now).finally(() => { _inflight = null; });
+  return _inflight;
+}
+
+async function _doFetch(now) {
   const shellCmd = buildQuotaShellCmd();
   let parsed = null;
-
   let cliOk = false;
+
   try {
     const { stdout, stderr } = await execAsync(shellCmd, {
       timeout: 15_000,
@@ -133,7 +144,6 @@ export async function fetchClaudeQuota({ force = false } = {}) {
       maxBuffer: 1024 * 1024,
     });
     const combined = stdout + "\n" + stderr;
-    // CLI ran successfully if we see the subscription preamble.
     cliOk = /subscription/i.test(combined) || /claude code usage/i.test(combined);
     parsed = parseUsageText(combined);
   } catch (err) {
@@ -146,9 +156,13 @@ export async function fetchClaudeQuota({ force = false } = {}) {
     }
   }
 
-  // CLI ran OK but quota lines were absent — this happens when the rolling
-  // window has near-zero usage (Claude omits bars below ~1%). Treat as 0%.
-  if (cliOk && !parsed) {
+  // CLI ran OK but quota lines absent — this happens when:
+  // (a) near-zero usage in the rolling window (Claude omits bars below ~1%), or
+  // (b) CLI cold-start: the server-side rolling window hasn't been computed yet.
+  // In case (b) the real value appears within ~60s. Use a 5s short-cache so
+  // the UI polls again quickly and shows real values as soon as they're ready.
+  const shortCache = cliOk && !parsed;
+  if (shortCache) {
     parsed = {
       session5hPct: 0, session5hWindowSec: 18000,
       week7dPct:    0, week7dWindowSec:    604800,
@@ -159,8 +173,9 @@ export async function fetchClaudeQuota({ force = false } = {}) {
     ? { ok: true, ...parsed, fetchedAt: now }
     : { ok: false, fetchedAt: now };
 
-  _cache = result;
-  _cacheAt = now;
+  _cache   = result;
+  // Short-cache the 0% fallback so the UI retries in ~5s rather than 60s.
+  _cacheAt = shortCache ? now - (CACHE_MS - 5_000) : now;
   return result;
 }
 
