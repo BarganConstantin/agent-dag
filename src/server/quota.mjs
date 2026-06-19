@@ -125,21 +125,34 @@ export async function fetchClaudeQuota({ force = false } = {}) {
   const shellCmd = buildQuotaShellCmd();
   let parsed = null;
 
+  let cliOk = false;
   try {
     const { stdout, stderr } = await execAsync(shellCmd, {
       timeout: 15_000,
       env: { ...process.env, NO_COLOR: "1", TERM: "dumb" },
-      maxBuffer: 1024 * 1024, // 1 MB
+      maxBuffer: 1024 * 1024,
     });
-    parsed = parseUsageText(stdout + "\n" + stderr);
+    const combined = stdout + "\n" + stderr;
+    // CLI ran successfully if we see the subscription preamble.
+    cliOk = /subscription/i.test(combined) || /claude code usage/i.test(combined);
+    parsed = parseUsageText(combined);
   } catch (err) {
-    // Binary not found or timed out — degrade gracefully.
     const msg = err?.stderr ? stripAnsi(err.stderr).trim() : (err?.message ?? String(err));
     console.error("agents-deck quota: claude CLI failed:", msg);
-    // exec() may still have stdout on non-zero exit — try to parse it
     if (err?.stdout || err?.stderr) {
-      parsed = parseUsageText((err.stdout ?? "") + "\n" + (err.stderr ?? ""));
+      const combined = (err.stdout ?? "") + "\n" + (err.stderr ?? "");
+      cliOk = /subscription/i.test(combined);
+      parsed = parseUsageText(combined);
     }
+  }
+
+  // CLI ran OK but quota lines were absent — this happens when the rolling
+  // window has near-zero usage (Claude omits bars below ~1%). Treat as 0%.
+  if (cliOk && !parsed) {
+    parsed = {
+      session5hPct: 0, session5hWindowSec: 18000,
+      week7dPct:    0, week7dWindowSec:    604800,
+    };
   }
 
   const result = parsed
