@@ -1,18 +1,19 @@
 // Fetches Claude rate-limit quota by running `claude --print /usage`.
-// On Windows the binary is a .cmd wrapper — we run it via cmd.exe.
+// On Windows the binary is a .cmd wrapper — we use exec() (shell-based)
+// so that cmd.exe handles quoting and stdin redirect correctly.
 // Caches the result for 2 minutes.
-import { execFile } from "node:child_process";
+import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, platform } from "node:os";
 
-const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 const IS_WIN = platform() === "win32";
 
 let _cache = null;
 let _cacheAt = 0;
-const CACHE_MS = 120_000;
+const CACHE_MS = 60_000;
 
 function stripAnsi(s) {
   return s
@@ -30,6 +31,21 @@ function stripAnsi(s) {
  *   "Current week (Sonnet only): 48% used · resets Jun 21, 9am (Europe/Chisinau)"
  *   "Current week (Opus only): ..."   (if present)
  */
+// Parse "Jun 18, 4:09pm" (local time, no tz) into unix seconds.
+// Claude shows times in the user's local timezone, so parsing as local is correct.
+function parseResetToSec(resetStr) {
+  if (!resetStr) return null;
+  try {
+    const year = new Date().getFullYear();
+    // "4:09pm" → "4:09 PM" so Date.parse handles it
+    const norm = resetStr
+      .replace(/(\d{1,2}:\d{2})(am|pm)/i, "$1 $2")
+      .trim();
+    const d = new Date(`${norm} ${year}`);
+    return isNaN(d.getTime()) ? null : Math.floor(d.getTime() / 1000);
+  } catch { return null; }
+}
+
 function parseUsageText(raw) {
   const text = stripAnsi(raw);
   const result = {};
@@ -40,27 +56,30 @@ function parseUsageText(raw) {
     if (!line) return null;
     const pctM = line.match(/(\d{1,3})\s*%/);
     const resetM = line.match(/resets\s+(.+)/i);
+    const resetFull = resetM
+      ? resetM[1].replace(/\(.*?\)/g, "").replace(/·/g, "").trim()
+      : null;
     return {
-      pct: pctM ? Math.min(100, parseInt(pctM[1], 10)) : null,
-      reset: resetM
-        ? resetM[1]
-            .replace(/\(.*?\)/g, "")  // strip timezone in parens
-            .replace(/·/g, "")
-            .trim()
-        : null,
+      pct:     pctM ? Math.min(100, parseInt(pctM[1], 10)) : null,
+      reset:   resetFull,
+      resetAt: parseResetToSec(resetFull),
     };
   };
 
   const session = extract(/current session/i);
   if (session?.pct != null) {
-    result.session5hPct = session.pct;
-    if (session.reset) result.session5hReset = session.reset;
+    result.session5hPct       = session.pct;
+    result.session5hWindowSec = 18000;
+    if (session.reset)   result.session5hReset   = session.reset;
+    if (session.resetAt) result.session5hResetAt  = session.resetAt;
   }
 
   const weekAll = extract(/current week\s*\(all models\)/i) || extract(/current week\s*[:·]/i);
   if (weekAll?.pct != null) {
-    result.week7dPct = weekAll.pct;
-    if (weekAll.reset) result.week7dReset = weekAll.reset;
+    result.week7dPct       = weekAll.pct;
+    result.week7dWindowSec = 604800;
+    if (weekAll.reset)   result.week7dReset   = weekAll.reset;
+    if (weekAll.resetAt) result.week7dResetAt  = weekAll.resetAt;
   }
 
   const weekSon = extract(/current week\s*\(sonnet/i);
@@ -72,17 +91,21 @@ function parseUsageText(raw) {
   return Object.keys(result).length > 0 ? result : null;
 }
 
-/** Resolve the claude binary.
- *  On Windows, claude is a .cmd wrapper — return the full path so we can
- *  invoke it via cmd.exe. On Unix, look for the binary in common locations. */
-function findClaudeBin() {
+/** Build the shell command string for `claude --print /usage`.
+ *
+ *  We use exec() (shell-based) so cmd.exe / sh processes redirects.
+ *  On Windows: `< nul` closes stdin immediately, preventing the 3-second
+ *  "no stdin data" wait the claude CLI does when it detects a pipe.
+ *  On Unix: `< /dev/null` has the same effect.
+ */
+function buildQuotaShellCmd() {
   if (IS_WIN) {
     const npmBin = join(homedir(), "AppData", "Roaming", "npm", "claude.cmd");
-    if (existsSync(npmBin)) return { cmd: "cmd.exe", args: ["/c", npmBin] };
-    // Fallback: let cmd.exe find it via PATH.
-    return { cmd: "cmd.exe", args: ["/c", "claude.cmd"] };
+    const bin = existsSync(npmBin) ? npmBin : "claude.cmd";
+    // exec() on Windows uses cmd /c, so < nul redirect works fine.
+    // Wrap path in quotes in case of spaces in username.
+    return `"${bin}" --print /usage < nul`;
   }
-  // Unix: check PATH, then known install locations.
   const candidates = [
     "claude",
     join(homedir(), ".local", "bin", "claude"),
@@ -90,32 +113,46 @@ function findClaudeBin() {
     "/opt/homebrew/bin/claude",
   ];
   for (const c of candidates) {
-    if (!c.includes("/")) return { cmd: c, args: [] };
-    if (existsSync(c)) return { cmd: c, args: [] };
+    if (!c.includes("/") || existsSync(c)) return `${c} --print /usage < /dev/null`;
   }
-  return { cmd: "claude", args: [] };
+  return "claude --print /usage < /dev/null";
 }
 
 export async function fetchClaudeQuota({ force = false } = {}) {
   const now = Date.now();
   if (!force && _cache && now - _cacheAt < CACHE_MS) return _cache;
 
-  const { cmd, args } = findClaudeBin();
+  const shellCmd = buildQuotaShellCmd();
   let parsed = null;
 
+  let cliOk = false;
   try {
-    const { stdout, stderr } = await execFileAsync(
-      cmd,
-      [...args, "--print", "/usage"],
-      {
-        timeout: 12_000,
-        env: { ...process.env, NO_COLOR: "1", TERM: "dumb" },
-      }
-    );
-    parsed = parseUsageText(stdout + "\n" + stderr);
+    const { stdout, stderr } = await execAsync(shellCmd, {
+      timeout: 15_000,
+      env: { ...process.env, NO_COLOR: "1", TERM: "dumb" },
+      maxBuffer: 1024 * 1024,
+    });
+    const combined = stdout + "\n" + stderr;
+    // CLI ran successfully if we see the subscription preamble.
+    cliOk = /subscription/i.test(combined) || /claude code usage/i.test(combined);
+    parsed = parseUsageText(combined);
   } catch (err) {
-    // Binary not found or timed out — degrade gracefully.
-    console.error("agents-deck quota: claude CLI failed:", err?.message ?? err);
+    const msg = err?.stderr ? stripAnsi(err.stderr).trim() : (err?.message ?? String(err));
+    console.error("agents-deck quota: claude CLI failed:", msg);
+    if (err?.stdout || err?.stderr) {
+      const combined = (err.stdout ?? "") + "\n" + (err.stderr ?? "");
+      cliOk = /subscription/i.test(combined);
+      parsed = parseUsageText(combined);
+    }
+  }
+
+  // CLI ran OK but quota lines were absent — this happens when the rolling
+  // window has near-zero usage (Claude omits bars below ~1%). Treat as 0%.
+  if (cliOk && !parsed) {
+    parsed = {
+      session5hPct: 0, session5hWindowSec: 18000,
+      week7dPct:    0, week7dWindowSec:    604800,
+    };
   }
 
   const result = parsed
